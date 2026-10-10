@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { useAppSelector } from "@/store";
 import { sampleElevation, toLocal } from "@/lib/geo";
 
@@ -23,8 +24,8 @@ function disposeGroup(g: THREE.Group) {
 }
 
 export default function ThreeView() {
-  const { terrain, parcel, selected } = useAppSelector((s) => s.lot);
-  const exaggeration = useAppSelector((s) => s.ui.exaggeration);
+  const { terrain, parcel, selected, buildings } = useAppSelector((s) => s.lot);
+  const { exaggeration, showWater, showBuildings } = useAppSelector((s) => s.ui);
   const mountRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<Ctx | null>(null);
   const framedFor = useRef<unknown>(null);
@@ -86,14 +87,19 @@ export default function ThreeView() {
     disposeGroup(ctx.content);
     if (!terrain) return;
 
-    const { n, sizeM, elevations, minElevation, maxElevation, centerLat, centerLon } = terrain;
+    const { n, sizeM, elevations, maxElevation, centerLat, centerLon } = terrain;
     const half = sizeM / 2;
-    const range = maxElevation - minElevation || 1;
-    const yOf = (elev: number) => (elev - minElevation) * exaggeration;
+    // DEM cells at or below 0 m are sea: sink them to a seabed so the water plane reads as water
+    const SEABED = -3;
+    const eff = (e: number) => (e <= 0 ? SEABED : e);
+    const hasSea = elevations.some((e) => e <= 0);
+    const baseElev = Math.min(...elevations.map(eff));
+    const range = maxElevation - baseElev || 1;
+    const yOf = (elev: number) => (eff(elev) - baseElev) * exaggeration;
 
     const pos = new Float32Array(n * n * 3);
     const col = new Float32Array(n * n * 3);
-    const low = new THREE.Color("#5f8f5a"), high = new THREE.Color("#c9b98c"), peak = new THREE.Color("#f4f1ea");
+    const low = new THREE.Color("#7a9a62"), high = new THREE.Color("#c9b98c"), peak = new THREE.Color("#f4f1ea");
     const tmp = new THREE.Color();
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
@@ -102,8 +108,9 @@ export default function ThreeView() {
         pos[i * 3] = -half + (c / (n - 1)) * sizeM;
         pos[i * 3 + 1] = yOf(e);
         pos[i * 3 + 2] = -(-half + (r / (n - 1)) * sizeM); // z = -north
-        const t = (e - minElevation) / range;
-        (t < 0.6 ? tmp.copy(low).lerp(high, t / 0.6) : tmp.copy(high).lerp(peak, (t - 0.6) / 0.4));
+        const t = (eff(e) - baseElev) / range;
+        if (e <= 0) tmp.set("#4b7f8c");
+        else (t < 0.6 ? tmp.copy(low).lerp(high, t / 0.6) : tmp.copy(high).lerp(peak, (t - 0.6) / 0.4));
         col.set([tmp.r, tmp.g, tmp.b], i * 3);
       }
     }
@@ -122,6 +129,42 @@ export default function ThreeView() {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide }));
     ctx.content.add(mesh);
     ctx.content.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x33473a, wireframe: true, transparent: true, opacity: 0.12 })));
+
+    // sea
+    if (showWater && hasSea) {
+      const water = new THREE.Mesh(
+        new THREE.PlaneGeometry(sizeM, sizeM).rotateX(-Math.PI / 2),
+        new THREE.MeshStandardMaterial({ color: 0x2b86c5, transparent: true, opacity: 0.6, roughness: 0.15, metalness: 0.1, depthWrite: false }),
+      );
+      water.position.y = (0 - baseElev) * exaggeration;
+      water.renderOrder = 1;
+      ctx.content.add(water);
+    }
+
+    // existing buildings: footprint extruded to storeys x 3 m (true height, base follows the ground)
+    if (showBuildings && buildings?.buildings.length) {
+      const geos: THREE.BufferGeometry[] = [];
+      for (const b of buildings.buildings) {
+        const pts = b.ring.map(([lon, lat]) => toLocal(lon, lat, centerLon, centerLat));
+        const ys = pts.map((p) => yOf(sampleElevation(terrain, p.east, p.north)));
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        try {
+          const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.east, p.north)));
+          const g = new THREE.ExtrudeGeometry(shape, { depth: maxY - minY + b.heightM + 0.5, bevelEnabled: false });
+          g.rotateX(-Math.PI / 2); // shape (east, north) -> (x, -z), extrusion -> up
+          g.translate(0, minY - 0.5, 0);
+          geos.push(g);
+        } catch { /* skip degenerate footprint */ }
+      }
+      if (geos.length) {
+        const merged = mergeGeometries(geos, false);
+        geos.forEach((g) => g.dispose());
+        if (merged) {
+          ctx.content.add(new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 })));
+          ctx.content.add(new THREE.LineSegments(new THREE.EdgesGeometry(merged, 35), new THREE.LineBasicMaterial({ color: 0x7b827e })));
+        }
+      }
+    }
 
     // parcel outline with posts so small lots remain visible
     if (parcel?.boundary.length) {
@@ -147,7 +190,7 @@ export default function ThreeView() {
       ctx.controls.target.set(0, 0, 0);
       ctx.camera.position.set(0, sizeM * 0.3, sizeM * 0.4);
     }
-  }, [terrain, parcel, selected, exaggeration]);
+  }, [terrain, parcel, selected, buildings, exaggeration, showWater, showBuildings]);
 
   return (
     <div ref={mountRef} className="relative h-full w-full">

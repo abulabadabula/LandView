@@ -31,5 +31,17 @@ export interface TerrainGrid {
   maxElevation: number;
 }
 
+export interface Building {
+  id: number | null;
+  areaM2: number;
+  storeys: number;
+  storeysSource: "osm" | "assumed";
+  heightM: number;
+  use: string | null;
+  /** [lon, lat] exterior ring, not closed */
+  ring: [number, number][];
+}
+export interface BuildingCollection { buildings: Building[]; osmAvailable: boolean }
+
 export type ViewMode = "2d" | "3d";
 export type Basemap = "streets" | "aerial" | "topo";

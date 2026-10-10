@@ -1,6 +1,6 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import { api } from "@/lib/api";
-import type { AddressResult, Environment, Parcel, TerrainGrid } from "@/types";
+import type { AddressResult, BuildingCollection, Environment, Parcel, TerrainGrid } from "@/types";
 
 interface LotState {
   results: AddressResult[];
@@ -9,24 +9,27 @@ interface LotState {
   parcel: Parcel | null;
   env: Environment | null;
   terrain: TerrainGrid | null;
+  buildings: BuildingCollection | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
 }
 
 const initialState: LotState = {
   results: [], searching: false, selected: null, parcel: null,
-  env: null, terrain: null, status: "idle", error: null,
+  env: null, terrain: null, buildings: null, status: "idle", error: null,
 };
 
 export const searchAddresses = createAsyncThunk("lot/search", (q: string) => api.searchAddresses(q));
 
 export const loadLot = createAsyncThunk("lot/load", async (address: AddressResult) => {
-  const [parcel, env, terrain] = await Promise.all([
+  const [parcel, env, terrain, buildings] = await Promise.all([
     api.getLot(address.lat, address.lon),
     api.getEnvironment(address.lat, address.lon),
     api.getTerrain(address.lat, address.lon),
+    // buildings are optional: a failure must not block the rest of the lot
+    api.getBuildings(address.lat, address.lon).catch(() => null),
   ]);
-  return { address, parcel, env, terrain };
+  return { address, parcel, env, terrain, buildings };
 });
 
 const lotSlice = createSlice({
@@ -47,6 +50,7 @@ const lotSlice = createSlice({
       s.parcel = a.payload.parcel;
       s.env = a.payload.env;
       s.terrain = a.payload.terrain;
+      s.buildings = a.payload.buildings;
     });
     b.addCase(loadLot.rejected, (s, a) => { s.status = "error"; s.error = a.error.message ?? "Failed to load lot"; });
   },
