@@ -1,6 +1,7 @@
 import math
 
 from pyproj import Transformer
+from shapely.ops import transform as _shp_transform
 
 _to_nztm = Transformer.from_crs(4326, 2193, always_xy=True)  # WGS84 -> NZTM2000
 
@@ -22,3 +23,8 @@ def offset_latlon(lat: float, lon: float, east_m: float, north_m: float) -> tupl
     dlat = north_m / M_PER_DEG_LAT
     dlon = east_m / (M_PER_DEG_LAT * math.cos(math.radians(lat)))
     return lat + dlat, lon + dlon
+
+
+def project_geom(geom):
+    """Project a shapely lon/lat geometry to NZTM (metres)."""
+    return _shp_transform(_to_nztm.transform, geom)

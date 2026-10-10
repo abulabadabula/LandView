@@ -112,3 +112,54 @@ async def get_parcel_at(lat: float, lon: float) -> Parcel | None:
         geometry=geom,
         boundary=boundary,
     )
+
+
+def _normalize_geometry(geom: dict) -> dict:
+    """Make sure coordinates are [lon, lat] (some WFS servers answer lat/lon)."""
+
+    def first(c):
+        while isinstance(c[0], list):
+            c = c[0]
+        return c
+
+    a, b = first(geom["coordinates"])[:2]
+    if not (a < 0 < b):
+        return geom
+
+    def swap(c):
+        return [c[1], c[0], *c[2:]] if not isinstance(c[0], list) else [swap(x) for x in c]
+
+    return {**geom, "coordinates": swap(geom["coordinates"])}
+
+
+async def building_outlines(w: float, s: float, e: float, n: float, limit: int = 3000) -> list[dict]:
+    """NZ Building Outlines inside a lon/lat bbox (LINZ WFS). Returns GeoJSON features."""
+    st = get_settings()
+    key = _require_key()
+    base = {
+        "service": "WFS",
+        "version": "2.0.0",
+        "request": "GetFeature",
+        "typeNames": f"layer-{st.linz_building_layer}",
+        "outputFormat": "application/json",
+        "srsName": "EPSG:4326",
+        "count": limit,
+    }
+    # Axis order in CQL BBOX differs between servers, so try lon/lat first, then lat/lon.
+    filters = (f"bbox(shape,{w:.6f},{s:.6f},{e:.6f},{n:.6f})", f"bbox(shape,{s:.6f},{w:.6f},{n:.6f},{e:.6f})")
+    last_error: Exception | None = None
+    async with httpx.AsyncClient(timeout=max(st.http_timeout, 40)) as client:
+        for cql in filters:
+            try:
+                r = await client.get(st.linz_wfs_url.format(key=key), params={**base, "cql_filter": cql})
+                r.raise_for_status()
+                feats = r.json().get("features", [])
+            except (httpx.HTTPError, ValueError) as ex:
+                last_error = ex
+                continue
+            feats = [{**f, "geometry": _normalize_geometry(f["geometry"])} for f in feats if f.get("geometry")]
+            if feats:
+                return feats
+    if last_error:
+        raise UpstreamError(f"LINZ building outlines failed: {last_error}") from last_error
+    return []

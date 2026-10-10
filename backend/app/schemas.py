@@ -69,3 +69,18 @@ class TerrainGrid(CamelModel):
     elevations: list[float]  # row-major, rows south->north, columns west->east
     min_elevation: float
     max_elevation: float
+
+
+class Building(CamelModel):
+    id: int | None = None
+    area_m2: float
+    storeys: int
+    storeys_source: str  # "osm" (tagged) or "assumed" (estimated)
+    height_m: float
+    use: str | None = None
+    ring: list[list[float]]  # [lon, lat] exterior ring, not closed
+
+
+class BuildingCollection(CamelModel):
+    buildings: list[Building]
+    osm_available: bool  # False when the storey lookup failed and every height is assumed
