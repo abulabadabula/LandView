@@ -196,6 +196,10 @@ export default function CesiumView() {
     viewer.scene.screenSpaceCameraController.rotateEventTypes = CameraEventType.LEFT_DRAG;
     viewer.scene.screenSpaceCameraController.tiltEventTypes = [
       CameraEventType.RIGHT_DRAG,
+      CameraEventType.MIDDLE_DRAG,
+    ];
+    viewer.scene.screenSpaceCameraController.zoomEventTypes = [
+      CameraEventType.WHEEL,
       CameraEventType.PINCH,
     ];
     viewer.scene.requestRender();
