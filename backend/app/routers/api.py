@@ -1,7 +1,15 @@
 from fastapi import APIRouter, Query
 
-from app.schemas import AddressResult, BuildingCollection, Environment, Parcel, TerrainGrid
+from app.schemas import (
+    AddressResult,
+    BuildingCollection,
+    ContextCollection,
+    Environment,
+    Parcel,
+    TerrainGrid,
+)
 from app.services import buildings as building_service
+from app.services import context as context_service
 from app.services import environment, linz
 
 router = APIRouter(prefix="/api")
@@ -32,7 +40,7 @@ async def terrain(
     lat: float = Query(ge=-48, le=-33),
     lon: float = Query(ge=165, le=180),
     size_m: float = Query(1000, ge=200, le=5000),
-    n: int = Query(25, ge=5, le=40),
+    n: int = Query(33, ge=5, le=40),
 ):
     return await environment.terrain_grid(lat, lon, size_m, n)
 
@@ -44,3 +52,12 @@ async def buildings(
     size_m: float = Query(1000, ge=200, le=3000),
 ):
     return await building_service.buildings_around(lat, lon, size_m)
+
+
+@router.get("/context", response_model=ContextCollection)
+async def context(
+    lat: float = Query(ge=-48, le=-33),
+    lon: float = Query(ge=165, le=180),
+    size_m: float = Query(1000, ge=200, le=3000),
+):
+    return await context_service.context_around(lat, lon, size_m)
