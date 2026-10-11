@@ -40,7 +40,10 @@ async def terrain(
     lat: float = Query(ge=-48, le=-33),
     lon: float = Query(ge=165, le=180),
     size_m: float = Query(1000, ge=200, le=5000),
-    n: int = Query(33, ge=5, le=40),
+    # Open-Meteo's DEM is 90 m resolution and its elevation endpoint accepts 100
+    # coordinate pairs per request. 25x25 gives a smoother visual interpolation
+    # without creating the 1000+ point request burst used previously.
+    n: int = Query(25, ge=5, le=33),
 ):
     return await environment.terrain_grid(lat, lon, size_m, n)
 
