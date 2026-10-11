@@ -1,18 +1,18 @@
 # LandView
 
-Search a New Zealand address, see its lot on a map, read its boundary, area, topography and environment data, and switch to a 3D terrain view.
+Search a New Zealand address, inspect its parcel and environmental context, and switch to a rotatable CesiumJS 3D view of surrounding terrain, building masses, roads and water features.
 
 | Layer | Stack |
 |---|---|
 | Frontend | TypeScript, React, Redux Toolkit, CesiumJS, Leaflet, Tailwind, shadcn/ui |
-| Backend | FastAPI, httpx, pyproj |
-| Data | LINZ Data Service (addresses, parcels), LINZ Basemaps (tiles), Open-Meteo (elevation, climate) |
+| Backend | FastAPI, httpx, pyproj, Shapely |
+| Data | LINZ addresses/parcels/building outlines, Open-Meteo elevation/climate, OpenStreetMap context |
 
 ## Layout
 
-Menu header with address search, toolbar, status bar, and resizable left and right panels around the centre canvas.
-The left panel lists the lot (legal description, title, area), boundary points (WGS84 and NZTM2000), topography and environment.
-The right panel holds basemap and 3D settings. Panel sizes persist in localStorage.
+The application has a header and toolbar, with resizable left/right information panels surrounding the main canvas.
+The left panel lists the selected lot, boundary points, topography and environmental information.
+The right panel controls the basemap and 3D scene, including vertical exaggeration, visible layers, and context coverage width (500 m to 3 km). Changing the coverage reloads terrain and nearby features around the selected address.
 
 ## Environment parameters
 
@@ -25,17 +25,18 @@ cp frontend/.env.example frontend/.env
 
 | File | Variable | Purpose |
 |---|---|---|
-| `backend/.env` | `LINZ_API_KEY` | **Required.** Free key from https://data.linz.govt.nz (needs layers 53353 Street Address and 50772 Primary Parcels). |
+| `backend/.env` | `LINZ_API_KEY` | **Required** for address, parcel and building-outline access. Get a free key from https://data.linz.govt.nz. |
 | `backend/.env` | `CORS_ORIGINS` | Allowed browser origins, comma separated. |
 | `backend/.env` | `LINZ_ADDRESS_LAYER`, `LINZ_PARCEL_LAYER`, `HTTP_TIMEOUT` | Optional overrides. |
-| `frontend/.env` | `VITE_API_BASE_URL` | API base, default `/api` (Vite dev proxy). |
-| `frontend/.env` | `VITE_DEV_PROXY_TARGET` | Backend URL for the proxy, default `http://localhost:8000`. |
-| `frontend/.env` | `VITE_LINZ_BASEMAPS_KEY` | Optional key from https://basemaps.linz.govt.nz for aerial and topographic tiles. Falls back to OpenStreetMap. |
-| `frontend/.env` | `VITE_CESIUM_ION_TOKEN` | Optional free token from https://ion.cesium.com. Enables Cesium World Terrain; without it the 3D view uses the backend elevation grid. |
+| `backend/.env` | `OVERPASS_URL` | Optional override for the OpenStreetMap Overpass endpoint; defaults to `https://overpass-api.de/api/interpreter`. |
+| `frontend/.env` | `VITE_API_BASE_URL` | API base, default `/api`. |
+| `frontend/.env` | `VITE_DEV_PROXY_TARGET` | Backend URL for the Vite dev proxy, default `http://localhost:8000`. |
+| `frontend/.env` | `VITE_LINZ_BASEMAPS_KEY` | Optional LINZ aerial/topographic tile key. Falls back to OpenStreetMap streets. |
+| `frontend/.env` | `VITE_CESIUM_ION_TOKEN` | Optional Cesium ion access token. Enables streamed Cesium World Terrain; without it, the app uses the backend elevation grid as a fallback. |
 
-Open-Meteo needs no key.
+Open-Meteo and OpenStreetMap Overpass do not require a key, subject to their service availability and usage policies.
 
-## Run
+## Run locally
 
 ```bash
 # backend
@@ -54,21 +55,26 @@ npm run dev                            # http://localhost:5173
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/address/search?q=` | Matching addresses (LINZ WFS, layer 53353) |
-| `GET /api/lot?lat=&lon=` | Parcel at the point: appellation, title, area, boundary points (LINZ Query API, layer 50772) |
-| `GET /api/environment?lat=&lon=` | Elevation, slope, aspect, indicative wind zone, climate normals |
+| `GET /api/address/search?q=` | Address matches from LINZ |
+| `GET /api/lot?lat=&lon=` | Parcel geometry, legal description and boundary points |
+| `GET /api/environment?lat=&lon=` | Elevation, slope, aspect, indicative wind zone and climate |
 | `GET /api/terrain?lat=&lon=&size_m=&n=` | Elevation grid used by the 3D view |
+| `GET /api/buildings?lat=&lon=&size_m=` | LINZ building footprints enriched with OSM height/levels where available |
+| `GET /api/context?lat=&lon=&size_m=` | OSM roads, waterways and closed-way/multipolygon water bodies |
 
-## 3D view (CesiumJS)
+## 3D scene
 
-The 3D view is a Cesium globe with the selected basemap draped over terrain, the parcel boundary clamped to the ground, extruded building footprints, a translucent sea plane and a vertical exaggeration slider. Terrain comes from the backend elevation grid (served to Cesium as a custom heightmap provider, clamped at the grid edge) or, if `VITE_CESIUM_ION_TOKEN` is set, from Cesium World Terrain. Cesium's workers and assets are served from `/cesium` (dev middleware / copied to `dist/cesium` on build, see `frontend/vite.config.ts`).
+The 3D view uses CesiumJS in 3D globe mode. Drag the left mouse button to rotate, right-drag to tilt, and use the wheel to zoom. The selected parcel is outlined over the terrain. Nearby roads and waterways are drawn as ground-clamped lines, mapped water bodies as ground-clamped polygons, and each building footprint is extruded using its mapped/estimated height. Mapped and estimated building heights use different colours.
 
-## Data caveats
+The context width can be changed from 500 m to 3 km. The scene re-frames for the newly loaded coverage, but changing layer toggles or vertical exaggeration does not reset the chosen camera view.
 
-- **Wind zone is indicative.** It is bucketed from 5 years of ERA5 gusts and is not an NZS 3604 site-specific zone. Replace `indicative_wind_zone` in `backend/app/services/environment.py` with council wind-zone data when you have it.
-- **Topography is coarse.** Elevation comes from Open-Meteo's ~90 m DEM. For lot-scale detail, switch `openmeteo.elevations` to the LINZ NZ 8m DEM.
-- Parcel data is CC BY 4.0 (LINZ). Keep the attribution.
+Cesium workers and assets are served from `/cesium` (see `frontend/vite.config.ts`).
 
-## Ideas for next steps
+## Data limitations and attribution
 
-Council hazard layers (flood, liquefaction, slope failure), zoning from district plans, contours in 3D, building footprints (LINZ layer 101290), tests and CI.
+- **Terrain fallback is for visualisation only.** Without `VITE_CESIUM_ION_TOKEN`, the scene interpolates the backend elevation grid from Open-Meteo elevation samples. These are based on a coarse global DEM and do not provide lot-scale LiDAR detail. For high-detail terrain, configure a terrain provider backed by suitable LINZ LiDAR DEM coverage or use Cesium World Terrain where its resolution/coverage meets the purpose. Do not use the fallback grid for surveying, earthworks quantities or engineering design.
+- LINZ publishes New Zealand LiDAR-based elevation data for much of the country. The available resolution and capture date vary by location; verify coverage and the dataset metadata before relying on it. See [LINZ elevation data access](https://www.linz.govt.nz/products-services/data/types-linz-data/elevation-data/access-elevation-data).
+- **Building heights are not complete national attributes.** Heights/levels are taken from tagged OpenStreetMap buildings when a nearby match can be made; otherwise they are estimated using footprint use/area and a nominal storey height. The 3D massing is indicative, not a verified building survey.
+- Road and hydrography lines/polygons come from OpenStreetMap's Overpass API and will reflect only mapped features available there. Water multipolygon outer rings are stitched from their member ways; inner holes are not modelled in this first version. Respect [OpenStreetMap attribution and usage guidance](https://www.openstreetmap.org/copyright).
+- **Wind zone is indicative.** It is bucketed from historical ERA5 gusts and is not an NZS 3604 site-specific wind zone. Confirm with council or a structural engineer.
+- Parcel and building outline data are supplied by LINZ under its published licence terms. Retain attribution when redistributing derived data.
