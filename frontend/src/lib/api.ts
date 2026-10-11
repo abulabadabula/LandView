@@ -1,4 +1,11 @@
-import type { AddressResult, BuildingCollection, Environment, Parcel, TerrainGrid } from "@/types";
+import type {
+  AddressResult,
+  BuildingCollection,
+  ContextCollection,
+  Environment,
+  Parcel,
+  TerrainGrid,
+} from "@/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
@@ -17,6 +24,10 @@ export const api = {
   searchAddresses: (q: string) => get<AddressResult[]>("/address/search", { q }),
   getLot: (lat: number, lon: number) => get<Parcel | null>("/lot", { lat, lon }),
   getEnvironment: (lat: number, lon: number) => get<Environment>("/environment", { lat, lon }),
-  getBuildings: (lat: number, lon: number) => get<BuildingCollection>("/buildings", { lat, lon }),
-  getTerrain: (lat: number, lon: number) => get<TerrainGrid>("/terrain", { lat, lon }),
+  getTerrain: (lat: number, lon: number, sizeM = 1000) =>
+    get<TerrainGrid>("/terrain", { lat, lon, size_m: sizeM, n: 33 }),
+  getBuildings: (lat: number, lon: number, sizeM = 1000) =>
+    get<BuildingCollection>("/buildings", { lat, lon, size_m: sizeM }),
+  getContext: (lat: number, lon: number, sizeM = 1000) =>
+    get<ContextCollection>("/context", { lat, lon, size_m: sizeM }),
 };
