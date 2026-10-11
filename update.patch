@@ -1,0 +1,1140 @@
+From 2b0ca8e9476638c6655b44b1d6a8cc7435e278a8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 11 Oct 2026 10:10:57 +0000
+Subject: [PATCH] Replace Three.js 3D view with CesiumJS
+
+---
+ README.md                                     |   7 +-
+ frontend/.env.example                         |   7 +
+ frontend/.gitignore                           |   3 +
+ frontend/README.md                            |   2 +-
+ frontend/package-lock.json                    | 330 +++++++++++++++---
+ frontend/package.json                         |   5 +-
+ frontend/src/App.tsx                          |   4 +-
+ frontend/src/components/cesium/CesiumView.tsx | 231 ++++++++++++
+ frontend/src/components/three/ThreeView.tsx   | 204 -----------
+ frontend/vite.config.ts                       |  31 +-
+ 10 files changed, 555 insertions(+), 269 deletions(-)
+ create mode 100644 frontend/.env.example
+ create mode 100644 frontend/.gitignore
+ create mode 100644 frontend/src/components/cesium/CesiumView.tsx
+ delete mode 100644 frontend/src/components/three/ThreeView.tsx
+
+diff --git a/README.md b/README.md
+index 3376cc7..fb8ca57 100644
+--- a/README.md
++++ b/README.md
+@@ -4,7 +4,7 @@ Search a New Zealand address, see its lot on a map, read its boundary, area, top
+ 
+ | Layer | Stack |
+ |---|---|
+-| Frontend | TypeScript, React, Redux Toolkit, Three.js, Leaflet, Tailwind, shadcn/ui |
++| Frontend | TypeScript, React, Redux Toolkit, CesiumJS, Leaflet, Tailwind, shadcn/ui |
+ | Backend | FastAPI, httpx, pyproj |
+ | Data | LINZ Data Service (addresses, parcels), LINZ Basemaps (tiles), Open-Meteo (elevation, climate) |
+ 
+@@ -31,6 +31,7 @@ cp frontend/.env.example frontend/.env
+ | `frontend/.env` | `VITE_API_BASE_URL` | API base, default `/api` (Vite dev proxy). |
+ | `frontend/.env` | `VITE_DEV_PROXY_TARGET` | Backend URL for the proxy, default `http://localhost:8000`. |
+ | `frontend/.env` | `VITE_LINZ_BASEMAPS_KEY` | Optional key from https://basemaps.linz.govt.nz for aerial and topographic tiles. Falls back to OpenStreetMap. |
++| `frontend/.env` | `VITE_CESIUM_ION_TOKEN` | Optional free token from https://ion.cesium.com. Enables Cesium World Terrain; without it the 3D view uses the backend elevation grid. |
+ 
+ Open-Meteo needs no key.
+ 
+@@ -58,6 +59,10 @@ npm run dev                            # http://localhost:5173
+ | `GET /api/environment?lat=&lon=` | Elevation, slope, aspect, indicative wind zone, climate normals |
+ | `GET /api/terrain?lat=&lon=&size_m=&n=` | Elevation grid used by the 3D view |
+ 
++## 3D view (CesiumJS)
++
++The 3D view is a Cesium globe with the selected basemap draped over terrain, the parcel boundary clamped to the ground, extruded building footprints, a translucent sea plane and a vertical exaggeration slider. Terrain comes from the backend elevation grid (served to Cesium as a custom heightmap provider, clamped at the grid edge) or, if `VITE_CESIUM_ION_TOKEN` is set, from Cesium World Terrain. Cesium's workers and assets are served from `/cesium` (dev middleware / copied to `dist/cesium` on build, see `frontend/vite.config.ts`).
++
+ ## Data caveats
+ 
+ - **Wind zone is indicative.** It is bucketed from 5 years of ERA5 gusts and is not an NZS 3604 site-specific zone. Replace `indicative_wind_zone` in `backend/app/services/environment.py` with council wind-zone data when you have it.
+diff --git a/frontend/.env.example b/frontend/.env.example
+new file mode 100644
+index 0000000..d0020dc
+--- /dev/null
++++ b/frontend/.env.example
+@@ -0,0 +1,7 @@
++VITE_API_BASE_URL=/api
++VITE_DEV_PROXY_TARGET=http://localhost:8000
++# Optional: LINZ Basemaps key (aerial + topographic tiles). Falls back to OpenStreetMap.
++VITE_LINZ_BASEMAPS_KEY=
++# Optional: Cesium ion token (https://ion.cesium.com). Enables Cesium World Terrain in the 3D view.
++# Without it the 3D view uses the elevation grid from the backend.
++VITE_CESIUM_ION_TOKEN=
+diff --git a/frontend/.gitignore b/frontend/.gitignore
+new file mode 100644
+index 0000000..9c97bbd
+--- /dev/null
++++ b/frontend/.gitignore
+@@ -0,0 +1,3 @@
++node_modules
++dist
++.env
+diff --git a/frontend/README.md b/frontend/README.md
+index 4f24e69..6133eaf 100644
+--- a/frontend/README.md
++++ b/frontend/README.md
+@@ -1,4 +1,4 @@
+ # LandView frontend
+ 
+-React 19 + TypeScript + Vite, Redux Toolkit, Three.js, Leaflet, Tailwind v4 and shadcn/ui.
++React 19 + TypeScript + Vite, Redux Toolkit, CesiumJS, Leaflet, Tailwind v4 and shadcn/ui.
+ See the root README for setup.
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 3b7e31a..9903780 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -11,6 +11,7 @@
+         "@radix-ui/react-dropdown-menu": "^2.1.25",
+         "@radix-ui/react-slot": "^1.4.0",
+         "@reduxjs/toolkit": "^2.13.0",
++        "cesium": "^1.146.0",
+         "class-variance-authority": "^0.7.1",
+         "clsx": "^2.1.1",
+         "leaflet": "^1.9.4",
+@@ -19,8 +20,7 @@
+         "react-dom": "^19.2.8",
+         "react-redux": "^9.3.0",
+         "react-resizable-panels": "^3.0.6",
+-        "tailwind-merge": "^3.7.0",
+-        "three": "^0.186.1"
++        "tailwind-merge": "^3.7.0"
+       },
+       "devDependencies": {
+         "@tailwindcss/vite": "^4.3.3",
+@@ -28,7 +28,6 @@
+         "@types/node": "^24.19.2",
+         "@types/react": "^19.2.18",
+         "@types/react-dom": "^19.2.7",
+-        "@types/three": "^0.186.0",
+         "@vitejs/plugin-react": "^6.1.1",
+         "oxlint": "^1.81.0",
+         "tailwindcss": "^4.3.3",
+@@ -36,13 +35,68 @@
+         "vite": "^8.3.0"
+       }
+     },
+-    "node_modules/@dimforge/rapier3d-compat": {
+-      "version": "0.12.0",
+-      "resolved": "https://registry.npmjs.org/@dimforge/rapier3d-compat/-/rapier3d-compat-0.12.0.tgz",
+-      "integrity": "sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==",
+-      "dev": true,
++    "node_modules/@cesium/core": {
++      "version": "0.1.0",
++      "resolved": "https://registry.npmjs.org/@cesium/core/-/core-0.1.0.tgz",
++      "integrity": "sha512-SD5H3dnWMIiJs04YQnV71ziFzAKcigPEwUFUv9mCX7Y0X7wZXgxGvNz4NCqmoVqHqfSQgdTDzP52fRHl7Jthpg==",
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
++    "node_modules/@cesium/engine": {
++      "version": "26.4.0",
++      "resolved": "https://registry.npmjs.org/@cesium/engine/-/engine-26.4.0.tgz",
++      "integrity": "sha512-OQkL54hPRBkOto0NmArLkEpbWZzTaWAhsx/mGNw85jXdr/nl/OvTqLC8QZv5wKSv4imuzHq/kT6IIy8/B3QLFQ==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "@cesium/core": "^0.1.0",
++        "@cesium/wasm-splats": "^0.1.0-alpha.2",
++        "@spz-loader/core": "0.3.1",
++        "@tweenjs/tween.js": "^25.0.0",
++        "@zip.js/zip.js": "^2.9.0",
++        "autolinker": "^4.0.0",
++        "bitmap-sdf": "^1.0.3",
++        "dompurify": "^3.4.14",
++        "draco3d": "^1.5.1",
++        "earcut": "3.0.2",
++        "grapheme-splitter": "^1.0.4",
++        "jsep": "^1.3.8",
++        "kdbush": "^4.1.0",
++        "ktx-parse": "^2.0.0",
++        "lerc": "^2.0.0",
++        "mersenne-twister": "^1.1.0",
++        "meshoptimizer": "^1.2.0",
++        "pako": "^3.0.0",
++        "protobufjs": "^8.8.0",
++        "rbush": "^4.0.1",
++        "topojson-client": "^3.1.0",
++        "urijs": "^1.19.7"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
++    "node_modules/@cesium/wasm-splats": {
++      "version": "0.1.0-alpha.2",
++      "resolved": "https://registry.npmjs.org/@cesium/wasm-splats/-/wasm-splats-0.1.0-alpha.2.tgz",
++      "integrity": "sha512-t9pMkknv31hhIbLpMa8yPvmqfpvs5UkUjgqlQv9SeO8VerCXOYnyP8/486BDaFrztM0A7FMbRjsXtNeKvqQghA==",
+       "license": "Apache-2.0"
+     },
++    "node_modules/@cesium/widgets": {
++      "version": "16.3.0",
++      "resolved": "https://registry.npmjs.org/@cesium/widgets/-/widgets-16.3.0.tgz",
++      "integrity": "sha512-ui0Rp2FR9H8QKsoR9iID/JZZbC7V8Kc6djewuFn7zXPlWa/cb4/vZ8ogIrRneZHFxh0vBrieYDaLeNn346bcEw==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "@cesium/core": "^0.1.0",
++        "@cesium/engine": "^26.4.0",
++        "nosleep.js": "^0.12.0"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
+     "node_modules/@floating-ui/core": {
+       "version": "1.8.0",
+       "resolved": "https://registry.npmjs.org/@floating-ui/core/-/core-1.8.0.tgz",
+@@ -1284,6 +1338,16 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@spz-loader/core": {
++      "version": "0.3.1",
++      "resolved": "https://registry.npmjs.org/@spz-loader/core/-/core-0.3.1.tgz",
++      "integrity": "sha512-8qJ1WIBXaJu8HjnJAjYniE0kYcr0kCe5Hp7kDzYiGVvvd7zyrOBwbF5imoW5mvwx1Qba0hxGEK5R9jEoaHKJFA==",
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=16",
++        "pnpm": ">=8"
++      }
++    },
+     "node_modules/@standard-schema/spec": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
+@@ -1830,10 +1894,9 @@
+       }
+     },
+     "node_modules/@tweenjs/tween.js": {
+-      "version": "23.1.3",
+-      "resolved": "https://registry.npmjs.org/@tweenjs/tween.js/-/tween.js-23.1.3.tgz",
+-      "integrity": "sha512-vJmvvwFxYuGnF2axRtPYocag6Clbb5YS7kLL+SO/TeVFzHqDIWrNKYtcsPMibjDx9O+bu+psAy9NKfWklassUA==",
+-      "dev": true,
++      "version": "25.0.0",
++      "resolved": "https://registry.npmjs.org/@tweenjs/tween.js/-/tween.js-25.0.0.tgz",
++      "integrity": "sha512-XKLA6syeBUaPzx4j3qwMqzzq+V4uo72BnlbOjmuljLrRqdsd3qnzvZZoxvMHZ23ndsRS4aufU6JOZYpCbU6T1A==",
+       "license": "MIT"
+     },
+     "node_modules/@types/geojson": {
+@@ -1883,27 +1946,12 @@
+         "@types/react": "^19.3.0"
+       }
+     },
+-    "node_modules/@types/stats.js": {
+-      "version": "0.17.4",
+-      "resolved": "https://registry.npmjs.org/@types/stats.js/-/stats.js-0.17.4.tgz",
+-      "integrity": "sha512-jIBvWWShCvlBqBNIZt0KAshWpvSjhkwkEu4ZUcASoAvhmrgAUI2t1dXrjSL4xXVLB4FznPrIsX3nKXFl/Dt4vA==",
+-      "dev": true,
+-      "license": "MIT"
+-    },
+-    "node_modules/@types/three": {
+-      "version": "0.186.0",
+-      "resolved": "https://registry.npmjs.org/@types/three/-/three-0.186.0.tgz",
+-      "integrity": "sha512-mxYSBpDC+D0pLfSP6sW4WZTcT+nrtmZcimMqnVmy36Hte3XpeYSrvgg4TRdaM1GemGog1AWzI5qL2VoIfMXbJQ==",
+-      "dev": true,
++    "node_modules/@types/trusted-types": {
++      "version": "2.0.7",
++      "resolved": "https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz",
++      "integrity": "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==",
+       "license": "MIT",
+-      "dependencies": {
+-        "@dimforge/rapier3d-compat": "~0.12.0",
+-        "@tweenjs/tween.js": "~23.1.3",
+-        "@types/stats.js": "*",
+-        "@types/webxr": ">=0.5.17",
+-        "fflate": "~0.8.3",
+-        "meshoptimizer": "~1.1.1"
+-      }
++      "optional": true
+     },
+     "node_modules/@types/use-sync-external-store": {
+       "version": "0.0.6",
+@@ -1911,13 +1959,6 @@
+       "integrity": "sha512-zFDAD+tlpf2r4asuHEj0XH6pY6i0g5NeAHPn+15wk3BV6JA69eERFXC1gyGThDkVa1zCyKr5jox1+2LbV/AMLg==",
+       "license": "MIT"
+     },
+-    "node_modules/@types/webxr": {
+-      "version": "0.5.24",
+-      "resolved": "https://registry.npmjs.org/@types/webxr/-/webxr-0.5.24.tgz",
+-      "integrity": "sha512-h8fgEd/DpoS9CBrjEQXR+dIDraopAEfu4wYVNY2tEPwk60stPWhvZMf4Foo5FakuQ7HFZoa8WceaWFervK2Ovg==",
+-      "dev": true,
+-      "license": "MIT"
+-    },
+     "node_modules/@vitejs/plugin-react": {
+       "version": "6.1.2",
+       "resolved": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.1.2.tgz",
+@@ -1948,6 +1989,17 @@
+         }
+       }
+     },
++    "node_modules/@zip.js/zip.js": {
++      "version": "2.23.0",
++      "resolved": "https://registry.npmjs.org/@zip.js/zip.js/-/zip.js-2.23.0.tgz",
++      "integrity": "sha512-K5obAqfrO7zhycnCupM9aaoZ9kx0SA0kv7+Z2oOUsdpWquv4s/Z4zyD7AdTqxrK3pgPM+ozaUi8kdRQbCWaIrQ==",
++      "license": "BSD-3-Clause",
++      "engines": {
++        "bun": ">=0.7.0",
++        "deno": ">=1.0.0",
++        "node": ">=18.0.0"
++      }
++    },
+     "node_modules/aria-hidden": {
+       "version": "1.2.6",
+       "resolved": "https://registry.npmjs.org/aria-hidden/-/aria-hidden-1.2.6.tgz",
+@@ -1960,6 +2012,45 @@
+         "node": ">=10"
+       }
+     },
++    "node_modules/autolinker": {
++      "version": "4.1.5",
++      "resolved": "https://registry.npmjs.org/autolinker/-/autolinker-4.1.5.tgz",
++      "integrity": "sha512-vEfYZPmvVOIuE567XBVCsx8SBgOYtjB2+S1iAaJ+HgH+DNjAcrHem2hmAeC9yaNGWayicv4yR+9UaJlkF3pvtw==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "^2.8.1"
++      },
++      "engines": {
++        "pnpm": ">=10.10.0"
++      }
++    },
++    "node_modules/bitmap-sdf": {
++      "version": "1.0.4",
++      "resolved": "https://registry.npmjs.org/bitmap-sdf/-/bitmap-sdf-1.0.4.tgz",
++      "integrity": "sha512-1G3U4n5JE6RAiALMxu0p1XmeZkTeCwGKykzsLTCqVzfSDaN6S7fKnkIkfejogz+iwqBWc0UYAIKnKHNN7pSfDg==",
++      "license": "MIT"
++    },
++    "node_modules/cesium": {
++      "version": "1.146.0",
++      "resolved": "https://registry.npmjs.org/cesium/-/cesium-1.146.0.tgz",
++      "integrity": "sha512-hvKkURnmc8OZ8qKNrwawl/YijwAItaWLbpAdIVNAUXODCLMjpod4PbdLuwo8Ab6ETL915MUGV2NocHFCRCeqqA==",
++      "license": "Apache-2.0",
++      "workspaces": [
++        "packages/core",
++        "packages/engine",
++        "packages/widgets",
++        "packages/sandcastle"
++      ],
++      "dependencies": {
++        "@cesium/core": "^0.1.0",
++        "@cesium/engine": "^26.4.0",
++        "@cesium/widgets": "^16.3.0",
++        "protobufjs": "^8.8.0"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
+     "node_modules/class-variance-authority": {
+       "version": "0.7.1",
+       "resolved": "https://registry.npmjs.org/class-variance-authority/-/class-variance-authority-0.7.1.tgz",
+@@ -1981,6 +2072,12 @@
+         "node": ">=6"
+       }
+     },
++    "node_modules/commander": {
++      "version": "2.20.3",
++      "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
++      "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
++      "license": "MIT"
++    },
+     "node_modules/csstype": {
+       "version": "3.2.3",
+       "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+@@ -2004,6 +2101,27 @@
+       "integrity": "sha512-ypdmJU/TbBby2Dxibuv7ZLW3Bs1QEmM7nHjEANfohJLvE0XVujisn1qPJcZxg+qDucsr+bP6fLD1rPS3AhJ7EQ==",
+       "license": "MIT"
+     },
++    "node_modules/dompurify": {
++      "version": "3.4.16",
++      "resolved": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.16.tgz",
++      "integrity": "sha512-sqo+pNp3qRhCIpbgRi1y8Tgk27Bo2Ry7w0dC1NBeNTdZChWjz9Xb/KOoZbRP/R6pQZ80Qw8YhXw13hWWBbMRnQ==",
++      "license": "(MPL-2.0 OR Apache-2.0)",
++      "optionalDependencies": {
++        "@types/trusted-types": "^2.0.7"
++      }
++    },
++    "node_modules/draco3d": {
++      "version": "1.5.7",
++      "resolved": "https://registry.npmjs.org/draco3d/-/draco3d-1.5.7.tgz",
++      "integrity": "sha512-m6WCKt/erDXcw+70IJXnG7M3awwQPAsZvJGX5zY7beBqpELw6RDGkYVU0W43AFxye4pDZ5i2Lbyc/NNGqwjUVQ==",
++      "license": "Apache-2.0"
++    },
++    "node_modules/earcut": {
++      "version": "3.0.2",
++      "resolved": "https://registry.npmjs.org/earcut/-/earcut-3.0.2.tgz",
++      "integrity": "sha512-X7hshQbLyMJ/3RPhyObLARM2sNxxmRALLKx1+NVFFnQ9gKzmCrxm9+uLIAdBcvc8FNLpctqlQ2V6AE92Ol9UDQ==",
++      "license": "ISC"
++    },
+     "node_modules/enhanced-resolve": {
+       "version": "5.26.0",
+       "resolved": "https://registry.npmjs.org/enhanced-resolve/-/enhanced-resolve-5.26.0.tgz",
+@@ -2036,13 +2154,6 @@
+         }
+       }
+     },
+-    "node_modules/fflate": {
+-      "version": "0.8.3",
+-      "resolved": "https://registry.npmjs.org/fflate/-/fflate-0.8.3.tgz",
+-      "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==",
+-      "dev": true,
+-      "license": "MIT"
+-    },
+     "node_modules/fsevents": {
+       "version": "2.3.3",
+       "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+@@ -2074,6 +2185,12 @@
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/grapheme-splitter": {
++      "version": "1.0.4",
++      "resolved": "https://registry.npmjs.org/grapheme-splitter/-/grapheme-splitter-1.0.4.tgz",
++      "integrity": "sha512-bzh50DW9kTPM00T8y4o8vQg89Di9oLJVLW/KaOGIXJWP/iqCN6WKYkbNOF04vFLJhwcpYUh9ydh/+5vpOqV4YQ==",
++      "license": "MIT"
++    },
+     "node_modules/immer": {
+       "version": "11.1.21",
+       "resolved": "https://registry.npmjs.org/immer/-/immer-11.1.21.tgz",
+@@ -2094,12 +2211,39 @@
+         "jiti": "lib/jiti-cli.mjs"
+       }
+     },
++    "node_modules/jsep": {
++      "version": "1.4.0",
++      "resolved": "https://registry.npmjs.org/jsep/-/jsep-1.4.0.tgz",
++      "integrity": "sha512-B7qPcEVE3NVkmSJbaYxvv4cHkVW7DQsZz13pUMrfS8z8Q/BuShN+gcTXrUlPiGqM2/t/EEaI030bpxMqY8gMlw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 10.16.0"
++      }
++    },
++    "node_modules/kdbush": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/kdbush/-/kdbush-4.1.0.tgz",
++      "integrity": "sha512-e9vurzrXJQrFX6ckpHP3bvj5l+9CnYzkxDNnNQ1h2QTqdWsUAJgXiKdGNcOa1EY85dU8KbQ+z/FdQdB7P+9yfQ==",
++      "license": "ISC"
++    },
++    "node_modules/ktx-parse": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ktx-parse/-/ktx-parse-2.0.0.tgz",
++      "integrity": "sha512-PW38i6SBZagE7c4yCYru636ICCkhJ8FNjOzAdjGkC65BZ0gElQJvFenSGc62SHFj5Fg0ft+U38PPhMZsWYQLCg==",
++      "license": "MIT"
++    },
+     "node_modules/leaflet": {
+       "version": "1.9.4",
+       "resolved": "https://registry.npmjs.org/leaflet/-/leaflet-1.9.4.tgz",
+       "integrity": "sha512-nxS1ynzJOmOlHp+iL3FyWqK89GtNL8U8rvlMOsQdTTssxZwCXh8N2NB3GDQOL+YR3XnWyZAxwQixURb+FA74PA==",
+       "license": "BSD-2-Clause"
+     },
++    "node_modules/lerc": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/lerc/-/lerc-2.0.0.tgz",
++      "integrity": "sha512-7qo1Mq8ZNmaR4USHHm615nEW2lPeeWJ3bTyoqFbd35DLx0LUH7C6ptt5FDCTAlbIzs3+WKrk5SkJvw8AFDE2hg==",
++      "license": "Apache-2.0"
++    },
+     "node_modules/lightningcss": {
+       "version": "1.33.0",
+       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz",
+@@ -2361,6 +2505,12 @@
+         "url": "https://opencollective.com/parcel"
+       }
+     },
++    "node_modules/long": {
++      "version": "5.3.2",
++      "resolved": "https://registry.npmjs.org/long/-/long-5.3.2.tgz",
++      "integrity": "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==",
++      "license": "Apache-2.0"
++    },
+     "node_modules/lucide-react": {
+       "version": "1.55.0",
+       "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.55.0.tgz",
+@@ -2386,11 +2536,16 @@
+         "@jridgewell/sourcemap-codec": "^1.5.5"
+       }
+     },
++    "node_modules/mersenne-twister": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/mersenne-twister/-/mersenne-twister-1.1.0.tgz",
++      "integrity": "sha512-mUYWsMKNrm4lfygPkL3OfGzOPTR2DBlTkBNHM//F6hGp8cLThY897crAlk3/Jo17LEOOjQUrNAx6DvgO77QJkA==",
++      "license": "MIT"
++    },
+     "node_modules/meshoptimizer": {
+-      "version": "1.1.1",
+-      "resolved": "https://registry.npmjs.org/meshoptimizer/-/meshoptimizer-1.1.1.tgz",
+-      "integrity": "sha512-oRFNWJRDA/WTrVj7NWvqa5HqE1t9MYDj2VaWirQCzCCrAd2GHrqR/sQezCxiWATPNlKTcRaPRHPJwIRoPBAp5g==",
+-      "dev": true,
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/meshoptimizer/-/meshoptimizer-1.3.0.tgz",
++      "integrity": "sha512-2oZqMAcEEiCtXWUjIGtZ71oPx1B0ZxYGTqIKsXB1wzWFhleNsCFxQuUJzgCV706bRcwPWtMGf1odmQvAcqKkIw==",
+       "license": "MIT"
+     },
+     "node_modules/nanoid": {
+@@ -2412,6 +2567,12 @@
+         "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
+       }
+     },
++    "node_modules/nosleep.js": {
++      "version": "0.12.0",
++      "resolved": "https://registry.npmjs.org/nosleep.js/-/nosleep.js-0.12.0.tgz",
++      "integrity": "sha512-9d1HbpKLh3sdWlhXMhU6MMH+wQzKkrgfRkYV0EBdvt99YJfj0ilCJrWRDYG2130Tm4GXbEoTCx5b34JSaP+HhA==",
++      "license": "MIT"
++    },
+     "node_modules/oxlint": {
+       "version": "1.87.0",
+       "resolved": "https://registry.npmjs.org/oxlint/-/oxlint-1.87.0.tgz",
+@@ -2461,6 +2622,22 @@
+         }
+       }
+     },
++    "node_modules/pako": {
++      "version": "3.0.2",
++      "resolved": "https://registry.npmjs.org/pako/-/pako-3.0.2.tgz",
++      "integrity": "sha512-uBv6IT2aT1A78iU6dpNEbf6+CyhlV/6g9JlJs9kpgjFGFhruIICVRysF/W0SLzXg5+hCl+KroH7e4YUyfEmgLg==",
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/puzrin"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/nodeca"
++        }
++      ],
++      "license": "(MIT AND Zlib)"
++    },
+     "node_modules/picocolors": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+@@ -2510,6 +2687,33 @@
+         "node": "^10 || ^12 || >=14"
+       }
+     },
++    "node_modules/protobufjs": {
++      "version": "8.8.0",
++      "resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-8.8.0.tgz",
++      "integrity": "sha512-N3xhQ5yyBx3vQq4gubBfASzYhJGNzeDbjqBpu61g7UVylsN/qyffU96TKWD3GbbLOKF82VGNRNvv1+BFgE31Eg==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "long": "^5.3.2"
++      },
++      "engines": {
++        "node": ">=12.0.0"
++      }
++    },
++    "node_modules/quickselect": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/quickselect/-/quickselect-3.0.0.tgz",
++      "integrity": "sha512-XdjUArbK4Bm5fLLvlm5KpTFOiOThgfWWI4axAZDWg4E/0mKdZyI9tNEfds27qCi1ze/vwTR16kvmmGhRra3c2g==",
++      "license": "ISC"
++    },
++    "node_modules/rbush": {
++      "version": "4.0.1",
++      "resolved": "https://registry.npmjs.org/rbush/-/rbush-4.0.1.tgz",
++      "integrity": "sha512-IP0UpfeWQujYC8Jg162rMNc01Rf0gWMMAb2Uxus/Q0qOFw4lCcq6ZnQEZwUoJqWyUGJ9th7JjwI4yIWo+uvoAQ==",
++      "license": "MIT",
++      "dependencies": {
++        "quickselect": "^3.0.0"
++      }
++    },
+     "node_modules/react": {
+       "version": "19.3.0",
+       "resolved": "https://registry.npmjs.org/react/-/react-19.3.0.tgz",
+@@ -2735,12 +2939,6 @@
+         "url": "https://opencollective.com/webpack"
+       }
+     },
+-    "node_modules/three": {
+-      "version": "0.186.1",
+-      "resolved": "https://registry.npmjs.org/three/-/three-0.186.1.tgz",
+-      "integrity": "sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA==",
+-      "license": "MIT"
+-    },
+     "node_modules/tinyglobby": {
+       "version": "0.2.17",
+       "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+@@ -2758,6 +2956,20 @@
+         "url": "https://github.com/sponsors/SuperchupuDev"
+       }
+     },
++    "node_modules/topojson-client": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/topojson-client/-/topojson-client-3.1.0.tgz",
++      "integrity": "sha512-605uxS6bcYxGXw9qi62XyrV6Q3xwbndjachmNxu8HWTtVPxZfEJN9fd/SZS1Q54Sn2y0TMyMxFj/cJINqGHrKw==",
++      "license": "ISC",
++      "dependencies": {
++        "commander": "2"
++      },
++      "bin": {
++        "topo2geo": "bin/topo2geo",
++        "topomerge": "bin/topomerge",
++        "topoquantize": "bin/topoquantize"
++      }
++    },
+     "node_modules/tslib": {
+       "version": "2.8.1",
+       "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+@@ -2785,6 +2997,12 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/urijs": {
++      "version": "1.19.11",
++      "resolved": "https://registry.npmjs.org/urijs/-/urijs-1.19.11.tgz",
++      "integrity": "sha512-HXgFDgDommxn5/bIv0cnQZsPhHDA90NPHD6+c/v21U5+Sx5hoP8+dP9IZXBU1gIfvdRfhG8cel9QNPeionfcCQ==",
++      "license": "MIT"
++    },
+     "node_modules/use-callback-ref": {
+       "version": "1.3.3",
+       "resolved": "https://registry.npmjs.org/use-callback-ref/-/use-callback-ref-1.3.3.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index e4ad121..791aabb 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -13,6 +13,7 @@
+     "@radix-ui/react-dropdown-menu": "^2.1.25",
+     "@radix-ui/react-slot": "^1.4.0",
+     "@reduxjs/toolkit": "^2.13.0",
++    "cesium": "^1.146.0",
+     "class-variance-authority": "^0.7.1",
+     "clsx": "^2.1.1",
+     "leaflet": "^1.9.4",
+@@ -21,8 +22,7 @@
+     "react-dom": "^19.2.8",
+     "react-redux": "^9.3.0",
+     "react-resizable-panels": "^3.0.6",
+-    "tailwind-merge": "^3.7.0",
+-    "three": "^0.186.1"
++    "tailwind-merge": "^3.7.0"
+   },
+   "devDependencies": {
+     "@tailwindcss/vite": "^4.3.3",
+@@ -30,7 +30,6 @@
+     "@types/node": "^24.19.2",
+     "@types/react": "^19.2.18",
+     "@types/react-dom": "^19.2.7",
+-    "@types/three": "^0.186.0",
+     "@vitejs/plugin-react": "^6.1.1",
+     "oxlint": "^1.81.0",
+     "tailwindcss": "^4.3.3",
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 2eeaebe..e16d5cf 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -8,7 +8,7 @@ import RightPanel from "@/components/layout/RightPanel";
+ import MapView from "@/components/map/MapView";
+ import { useAppSelector } from "@/store";
+ 
+-const ThreeView = lazy(() => import("@/components/three/ThreeView"));
++const CesiumView = lazy(() => import("@/components/cesium/CesiumView"));
+ 
+ export default function App() {
+   const viewMode = useAppSelector((s) => s.ui.viewMode);
+@@ -23,7 +23,7 @@ export default function App() {
+           {viewMode === "2d" ? (
+             <MapView />
+           ) : (
+-            <Suspense fallback={null}><ThreeView /></Suspense>
++            <Suspense fallback={null}><CesiumView /></Suspense>
+           )}
+         </ResizablePanel>
+         <ResizableHandle />
+diff --git a/frontend/src/components/cesium/CesiumView.tsx b/frontend/src/components/cesium/CesiumView.tsx
+new file mode 100644
+index 0000000..2a135da
+--- /dev/null
++++ b/frontend/src/components/cesium/CesiumView.tsx
+@@ -0,0 +1,231 @@
++import { useEffect, useRef } from "react";
++import {
++  Cartesian3,
++  Color,
++  CustomHeightmapTerrainProvider,
++  EllipsoidTerrainProvider,
++  HeadingPitchRange,
++  HeightReference,
++  Matrix4,
++  Math as CesiumMath,
++  Rectangle,
++  UrlTemplateImageryProvider,
++  Viewer,
++  WebMercatorTilingScheme,
++  createWorldTerrainAsync,
++  Ion,
++  type TerrainProvider,
++} from "cesium";
++import "cesium/Build/Cesium/Widgets/widgets.css";
++import { useAppSelector } from "@/store";
++import { basemapSource } from "@/lib/basemaps";
++import { sampleElevation } from "@/lib/geo";
++import type { TerrainGrid } from "@/types";
++
++// Cesium loads workers and assets from here (see vite.config.ts)
++(window as unknown as { CESIUM_BASE_URL: string }).CESIUM_BASE_URL = "/cesium";
++
++const ION_TOKEN = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
++if (ION_TOKEN) Ion.defaultAccessToken = ION_TOKEN;
++
++const SEABED = -3; // DEM cells at or below 0 m are sea: sink them so the water plane reads as water
++const TILE = 65; // heightmap samples per terrain tile edge
++const M_PER_DEG = 111_320;
++
++/** Terrain provider that serves the backend's elevation grid (clamped to its edge outside the grid). */
++function gridTerrain(t: TerrainGrid): TerrainProvider {
++  const eff = (e: number) => (e <= 0 ? SEABED : e);
++  const cosLat = Math.cos((t.centerLat * Math.PI) / 180);
++  return new CustomHeightmapTerrainProvider({
++    width: TILE,
++    height: TILE,
++    tilingScheme: new WebMercatorTilingScheme(),
++    callback: (x, y, level) => {
++      const scheme = new WebMercatorTilingScheme();
++      const rect = scheme.tileXYToRectangle(x, y, level);
++      const out = new Float32Array(TILE * TILE);
++      for (let r = 0; r < TILE; r++) {
++        const lat = CesiumMath.toDegrees(rect.north - ((rect.north - rect.south) * r) / (TILE - 1));
++        for (let c = 0; c < TILE; c++) {
++          const lon = CesiumMath.toDegrees(rect.west + ((rect.east - rect.west) * c) / (TILE - 1));
++          const east = (lon - t.centerLon) * M_PER_DEG * cosLat;
++          const north = (lat - t.centerLat) * M_PER_DEG;
++          out[r * TILE + c] = eff(sampleElevation(t, east, north));
++        }
++      }
++      return out;
++    },
++  });
++}
++
++/** Lon/lat rectangle covered by the terrain grid. */
++function gridRectangle(t: TerrainGrid) {
++  const half = t.sizeM / 2;
++  const dLat = half / M_PER_DEG;
++  const dLon = half / (M_PER_DEG * Math.cos((t.centerLat * Math.PI) / 180));
++  return Rectangle.fromDegrees(t.centerLon - dLon, t.centerLat - dLat, t.centerLon + dLon, t.centerLat + dLat);
++}
++
++export default function CesiumView() {
++  const { terrain, parcel, selected, buildings } = useAppSelector((s) => s.lot);
++  const { basemap, exaggeration, showWater, showBuildings } = useAppSelector((s) => s.ui);
++  const mountRef = useRef<HTMLDivElement>(null);
++  const viewerRef = useRef<Viewer | null>(null);
++  const framedFor = useRef<unknown>(null);
++
++  // viewer (once)
++  useEffect(() => {
++    const viewer = new Viewer(mountRef.current!, {
++      baseLayer: false,
++      terrainProvider: new EllipsoidTerrainProvider(),
++      animation: false,
++      timeline: false,
++      baseLayerPicker: false,
++      geocoder: false,
++      homeButton: false,
++      sceneModePicker: false,
++      navigationHelpButton: false,
++      fullscreenButton: false,
++      infoBox: false,
++      selectionIndicator: false,
++      requestRenderMode: true,
++      maximumRenderTimeChange: Infinity,
++    });
++    viewer.scene.globe.depthTestAgainstTerrain = true;
++    viewer.scene.globe.baseColor = Color.fromCssColorString("#dfe7e1");
++    viewer.scene.globe.enableLighting = false;
++    viewer.scene.screenSpaceCameraController.minimumZoomDistance = 5;
++    viewerRef.current = viewer;
++    return () => {
++      viewer.destroy();
++      viewerRef.current = null;
++    };
++  }, []);
++
++  // imagery follows the basemap choice
++  useEffect(() => {
++    const viewer = viewerRef.current;
++    if (!viewer) return;
++    const src = basemapSource(basemap);
++    const layers = viewer.imageryLayers;
++    layers.removeAll();
++    layers.addImageryProvider(
++      new UrlTemplateImageryProvider({
++        url: src.url,
++        credit: src.attribution.replace(/<[^>]+>/g, "").replace(/&copy;/g, "©"),
++        maximumLevel: 19,
++      }),
++    );
++    viewer.scene.requestRender();
++  }, [basemap]);
++
++  // terrain from the elevation grid (or Cesium World Terrain when an Ion token is configured)
++  useEffect(() => {
++    const viewer = viewerRef.current;
++    if (!viewer) return;
++    let cancelled = false;
++    if (!terrain) {
++      viewer.terrainProvider = new EllipsoidTerrainProvider();
++      return;
++    }
++    if (ION_TOKEN) {
++      createWorldTerrainAsync().then((p) => {
++        if (!cancelled && viewerRef.current) viewerRef.current.terrainProvider = p;
++      }).catch(() => {
++        if (!cancelled && viewerRef.current) viewerRef.current.terrainProvider = gridTerrain(terrain);
++      });
++    } else {
++      viewer.terrainProvider = gridTerrain(terrain);
++    }
++    return () => { cancelled = true; };
++  }, [terrain]);
++
++  // vertical exaggeration
++  useEffect(() => {
++    const viewer = viewerRef.current;
++    if (!viewer) return;
++    viewer.scene.verticalExaggeration = exaggeration;
++    viewer.scene.requestRender();
++  }, [exaggeration]);
++
++  // sea, buildings, parcel outline, selected address
++  useEffect(() => {
++    const viewer = viewerRef.current;
++    if (!viewer) return;
++    viewer.entities.removeAll();
++    if (!terrain) { viewer.scene.requestRender(); return; }
++
++    const { centerLat, centerLon, sizeM } = terrain;
++    const orange = Color.fromCssColorString("#c2410c");
++
++    if (showWater && terrain.elevations.some((e) => e <= 0)) {
++      viewer.entities.add({
++        rectangle: {
++          coordinates: gridRectangle(terrain),
++          height: 0,
++          material: Color.fromCssColorString("#2b86c5").withAlpha(0.6),
++        },
++      });
++    }
++
++    // existing buildings: footprint extruded to storeys x 3 m, base follows the ground
++    if (showBuildings && buildings?.buildings.length) {
++      for (const b of buildings.buildings) {
++        if (b.ring.length < 3) continue;
++        viewer.entities.add({
++          polygon: {
++            hierarchy: Cartesian3.fromDegreesArray(b.ring.flat()),
++            height: 0,
++            heightReference: HeightReference.RELATIVE_TO_GROUND,
++            extrudedHeight: b.heightM,
++            extrudedHeightReference: HeightReference.RELATIVE_TO_GROUND,
++            material: Color.WHITE,
++            outline: true,
++            outlineColor: Color.fromCssColorString("#7b827e"),
++          },
++        });
++      }
++    }
++
++    // parcel outline draped on the terrain, with corner markers
++    if (parcel?.boundary.length) {
++      const ring = parcel.boundary.flatMap((p) => [p.lon, p.lat]);
++      ring.push(parcel.boundary[0].lon, parcel.boundary[0].lat);
++      viewer.entities.add({
++        polyline: { positions: Cartesian3.fromDegreesArray(ring), width: 3, material: orange, clampToGround: true },
++      });
++      for (const p of parcel.boundary) {
++        viewer.entities.add({
++          position: Cartesian3.fromDegrees(p.lon, p.lat),
++          point: { pixelSize: 6, color: orange, outlineColor: Color.WHITE, outlineWidth: 1, heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY },
++        });
++      }
++    }
++    if (selected) {
++      viewer.entities.add({
++        position: Cartesian3.fromDegrees(selected.lon, selected.lat),
++        point: { pixelSize: 11, color: orange, outlineColor: Color.WHITE, outlineWidth: 2, heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY },
++      });
++    }
++
++    // re-frame the camera only when a new terrain arrives (not on slider changes)
++    if (framedFor.current !== terrain) {
++      framedFor.current = terrain;
++      const groundY = Math.max(sampleElevation(terrain, 0, 0), 0) * exaggeration;
++      const target = Cartesian3.fromDegrees(centerLon, centerLat, groundY);
++      viewer.camera.lookAt(target, new HeadingPitchRange(0, CesiumMath.toRadians(-35), sizeM * 0.9));
++      viewer.camera.lookAtTransform(Matrix4.IDENTITY); // release the target lock so normal orbit/pan/zoom works
++    }
++    viewer.scene.requestRender();
++  }, [terrain, parcel, selected, buildings, showWater, showBuildings]); // exaggeration is read only for the first framing
++
++  return (
++    <div ref={mountRef} className="relative h-full w-full">
++      {!terrain && (
++        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
++          Search an address to build the 3D terrain.
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/frontend/src/components/three/ThreeView.tsx b/frontend/src/components/three/ThreeView.tsx
+deleted file mode 100644
+index c18893d..0000000
+--- a/frontend/src/components/three/ThreeView.tsx
++++ /dev/null
+@@ -1,204 +0,0 @@
+-import { useEffect, useRef } from "react";
+-import * as THREE from "three";
+-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+-import { useAppSelector } from "@/store";
+-import { sampleElevation, toLocal } from "@/lib/geo";
+-
+-interface Ctx {
+-  renderer: THREE.WebGLRenderer;
+-  scene: THREE.Scene;
+-  camera: THREE.PerspectiveCamera;
+-  controls: OrbitControls;
+-  content: THREE.Group;
+-}
+-
+-function disposeGroup(g: THREE.Group) {
+-  g.traverse((o) => {
+-    const m = o as THREE.Mesh;
+-    m.geometry?.dispose();
+-    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+-    (Array.isArray(mat) ? mat : mat ? [mat] : []).forEach((x) => x.dispose());
+-  });
+-  g.clear();
+-}
+-
+-export default function ThreeView() {
+-  const { terrain, parcel, selected, buildings } = useAppSelector((s) => s.lot);
+-  const { exaggeration, showWater, showBuildings } = useAppSelector((s) => s.ui);
+-  const mountRef = useRef<HTMLDivElement>(null);
+-  const ctxRef = useRef<Ctx | null>(null);
+-  const framedFor = useRef<unknown>(null);
+-
+-  // renderer, camera, controls, render loop (once)
+-  useEffect(() => {
+-    const mount = mountRef.current!;
+-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+-    mount.appendChild(renderer.domElement);
+-
+-    const scene = new THREE.Scene();
+-    scene.background = new THREE.Color("#dfe7e1");
+-    scene.add(new THREE.HemisphereLight(0xffffff, 0x556b55, 1.1));
+-    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+-    sun.position.set(400, 800, 300);
+-    scene.add(sun);
+-
+-    const camera = new THREE.PerspectiveCamera(50, 1, 1, 20000);
+-    camera.position.set(0, 350, 450);
+-    const controls = new OrbitControls(camera, renderer.domElement);
+-    controls.enableDamping = true;
+-    controls.maxPolarAngle = Math.PI / 2 - 0.02;
+-
+-    const content = new THREE.Group();
+-    scene.add(content);
+-    ctxRef.current = { renderer, scene, camera, controls, content };
+-
+-    const resize = () => {
+-      const { clientWidth: w, clientHeight: h } = mount;
+-      if (!w || !h) return;
+-      renderer.setSize(w, h);
+-      camera.aspect = w / h;
+-      camera.updateProjectionMatrix();
+-    };
+-    const ro = new ResizeObserver(resize);
+-    ro.observe(mount);
+-    resize();
+-
+-    let raf = 0;
+-    const loop = () => { controls.update(); renderer.render(scene, camera); raf = requestAnimationFrame(loop); };
+-    loop();
+-
+-    return () => {
+-      cancelAnimationFrame(raf);
+-      ro.disconnect();
+-      controls.dispose();
+-      disposeGroup(content);
+-      renderer.dispose();
+-      renderer.domElement.remove();
+-      ctxRef.current = null;
+-    };
+-  }, []);
+-
+-  // rebuild terrain + parcel when data / exaggeration change
+-  useEffect(() => {
+-    const ctx = ctxRef.current;
+-    if (!ctx) return;
+-    disposeGroup(ctx.content);
+-    if (!terrain) return;
+-
+-    const { n, sizeM, elevations, maxElevation, centerLat, centerLon } = terrain;
+-    const half = sizeM / 2;
+-    // DEM cells at or below 0 m are sea: sink them to a seabed so the water plane reads as water
+-    const SEABED = -3;
+-    const eff = (e: number) => (e <= 0 ? SEABED : e);
+-    const hasSea = elevations.some((e) => e <= 0);
+-    const baseElev = Math.min(...elevations.map(eff));
+-    const range = maxElevation - baseElev || 1;
+-    const yOf = (elev: number) => (eff(elev) - baseElev) * exaggeration;
+-
+-    const pos = new Float32Array(n * n * 3);
+-    const col = new Float32Array(n * n * 3);
+-    const low = new THREE.Color("#7a9a62"), high = new THREE.Color("#c9b98c"), peak = new THREE.Color("#f4f1ea");
+-    const tmp = new THREE.Color();
+-    for (let r = 0; r < n; r++) {
+-      for (let c = 0; c < n; c++) {
+-        const i = r * n + c;
+-        const e = elevations[i];
+-        pos[i * 3] = -half + (c / (n - 1)) * sizeM;
+-        pos[i * 3 + 1] = yOf(e);
+-        pos[i * 3 + 2] = -(-half + (r / (n - 1)) * sizeM); // z = -north
+-        const t = (eff(e) - baseElev) / range;
+-        if (e <= 0) tmp.set("#4b7f8c");
+-        else (t < 0.6 ? tmp.copy(low).lerp(high, t / 0.6) : tmp.copy(high).lerp(peak, (t - 0.6) / 0.4));
+-        col.set([tmp.r, tmp.g, tmp.b], i * 3);
+-      }
+-    }
+-    const idx: number[] = [];
+-    for (let r = 0; r < n - 1; r++) {
+-      for (let c = 0; c < n - 1; c++) {
+-        const a = r * n + c, b = a + 1, d = a + n, e = d + 1;
+-        idx.push(a, b, d, b, e, d);
+-      }
+-    }
+-    const geo = new THREE.BufferGeometry();
+-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+-    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+-    geo.setIndex(idx);
+-    geo.computeVertexNormals();
+-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide }));
+-    ctx.content.add(mesh);
+-    ctx.content.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x33473a, wireframe: true, transparent: true, opacity: 0.12 })));
+-
+-    // sea
+-    if (showWater && hasSea) {
+-      const water = new THREE.Mesh(
+-        new THREE.PlaneGeometry(sizeM, sizeM).rotateX(-Math.PI / 2),
+-        new THREE.MeshStandardMaterial({ color: 0x2b86c5, transparent: true, opacity: 0.6, roughness: 0.15, metalness: 0.1, depthWrite: false }),
+-      );
+-      water.position.y = (0 - baseElev) * exaggeration;
+-      water.renderOrder = 1;
+-      ctx.content.add(water);
+-    }
+-
+-    // existing buildings: footprint extruded to storeys x 3 m (true height, base follows the ground)
+-    if (showBuildings && buildings?.buildings.length) {
+-      const geos: THREE.BufferGeometry[] = [];
+-      for (const b of buildings.buildings) {
+-        const pts = b.ring.map(([lon, lat]) => toLocal(lon, lat, centerLon, centerLat));
+-        const ys = pts.map((p) => yOf(sampleElevation(terrain, p.east, p.north)));
+-        const minY = Math.min(...ys), maxY = Math.max(...ys);
+-        try {
+-          const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.east, p.north)));
+-          const g = new THREE.ExtrudeGeometry(shape, { depth: maxY - minY + b.heightM + 0.5, bevelEnabled: false });
+-          g.rotateX(-Math.PI / 2); // shape (east, north) -> (x, -z), extrusion -> up
+-          g.translate(0, minY - 0.5, 0);
+-          geos.push(g);
+-        } catch { /* skip degenerate footprint */ }
+-      }
+-      if (geos.length) {
+-        const merged = mergeGeometries(geos, false);
+-        geos.forEach((g) => g.dispose());
+-        if (merged) {
+-          ctx.content.add(new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 })));
+-          ctx.content.add(new THREE.LineSegments(new THREE.EdgesGeometry(merged, 35), new THREE.LineBasicMaterial({ color: 0x7b827e })));
+-        }
+-      }
+-    }
+-
+-    // parcel outline with posts so small lots remain visible
+-    if (parcel?.boundary.length) {
+-      const pts = parcel.boundary.map((p) => {
+-        const { east, north } = toLocal(p.lon, p.lat, centerLon, centerLat);
+-        return new THREE.Vector3(east, yOf(sampleElevation(terrain, east, north)) + 1, -north);
+-      });
+-      const loop = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xc2410c }));
+-      ctx.content.add(loop);
+-      const posts = new THREE.BufferGeometry().setFromPoints(pts.flatMap((p) => [p, p.clone().add(new THREE.Vector3(0, 25, 0))]));
+-      ctx.content.add(new THREE.LineSegments(posts, new THREE.LineBasicMaterial({ color: 0xc2410c })));
+-    }
+-    if (selected) {
+-      const { east, north } = toLocal(selected.lon, selected.lat, centerLon, centerLat);
+-      const s = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 12), new THREE.MeshStandardMaterial({ color: 0xc2410c }));
+-      s.position.set(east, yOf(sampleElevation(terrain, east, north)) + 5, -north);
+-      ctx.content.add(s);
+-    }
+-
+-    // re-frame the camera only when a new terrain arrives (not on slider changes)
+-    if (framedFor.current !== terrain) {
+-      framedFor.current = terrain;
+-      ctx.controls.target.set(0, 0, 0);
+-      ctx.camera.position.set(0, sizeM * 0.3, sizeM * 0.4);
+-    }
+-  }, [terrain, parcel, selected, buildings, exaggeration, showWater, showBuildings]);
+-
+-  return (
+-    <div ref={mountRef} className="relative h-full w-full">
+-      {!terrain && (
+-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+-          Search an address to build the 3D terrain.
+-        </div>
+-      )}
+-    </div>
+-  );
+-}
+diff --git a/frontend/vite.config.ts b/frontend/vite.config.ts
+index e7d2ba9..15a9d14 100644
+--- a/frontend/vite.config.ts
++++ b/frontend/vite.config.ts
+@@ -1,13 +1,40 @@
++import fs from "node:fs";
+ import path from "node:path";
+-import { defineConfig, loadEnv } from "vite";
++import { defineConfig, loadEnv, type Plugin } from "vite";
+ import react from "@vitejs/plugin-react";
+ import tailwindcss from "@tailwindcss/vite";
+ 
++const CESIUM_SRC = path.resolve(__dirname, "node_modules/cesium/Build/Cesium");
++const CESIUM_DIRS = ["Workers", "ThirdParty", "Assets", "Widgets"];
++
++/**
++ * CesiumJS loads web workers and static assets at runtime from CESIUM_BASE_URL (/cesium).
++ * Dev: serve them straight from node_modules. Build: copy them into dist/cesium.
++ */
++function cesiumAssets(): Plugin {
++  return {
++    name: "landview-cesium-assets",
++    configureServer(server) {
++      server.middlewares.use("/cesium", (req, res, next) => {
++        const rel = decodeURIComponent((req.url ?? "/").split("?")[0]);
++        const file = path.join(CESIUM_SRC, rel);
++        if (!file.startsWith(CESIUM_SRC) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return next();
++        fs.createReadStream(file).pipe(res);
++      });
++    },
++    closeBundle() {
++      const out = path.resolve(__dirname, "dist/cesium");
++      for (const d of CESIUM_DIRS) fs.cpSync(path.join(CESIUM_SRC, d), path.join(out, d), { recursive: true });
++    },
++  };
++}
++
+ export default defineConfig(({ mode }) => {
+   const env = loadEnv(mode, process.cwd(), "");
+   return {
+-    plugins: [react(), tailwindcss()],
++    plugins: [react(), tailwindcss(), cesiumAssets()],
+     resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
++    define: { CESIUM_BASE_URL: JSON.stringify("/cesium") },
+     server: {
+       port: 5173,
+       // Dev: /api/* is forwarded to the FastAPI backend
+-- 
+2.43.0
+

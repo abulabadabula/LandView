@@ -4,7 +4,7 @@ Search a New Zealand address, see its lot on a map, read its boundary, area, top
 
 | Layer | Stack |
 |---|---|
-| Frontend | TypeScript, React, Redux Toolkit, Three.js, Leaflet, Tailwind, shadcn/ui |
+| Frontend | TypeScript, React, Redux Toolkit, CesiumJS, Leaflet, Tailwind, shadcn/ui |
 | Backend | FastAPI, httpx, pyproj |
 | Data | LINZ Data Service (addresses, parcels), LINZ Basemaps (tiles), Open-Meteo (elevation, climate) |
 
@@ -31,6 +31,7 @@ cp frontend/.env.example frontend/.env
 | `frontend/.env` | `VITE_API_BASE_URL` | API base, default `/api` (Vite dev proxy). |
 | `frontend/.env` | `VITE_DEV_PROXY_TARGET` | Backend URL for the proxy, default `http://localhost:8000`. |
 | `frontend/.env` | `VITE_LINZ_BASEMAPS_KEY` | Optional key from https://basemaps.linz.govt.nz for aerial and topographic tiles. Falls back to OpenStreetMap. |
+| `frontend/.env` | `VITE_CESIUM_ION_TOKEN` | Optional free token from https://ion.cesium.com. Enables Cesium World Terrain; without it the 3D view uses the backend elevation grid. |
 
 Open-Meteo needs no key.
 
@@ -57,6 +58,10 @@ npm run dev                            # http://localhost:5173
 | `GET /api/lot?lat=&lon=` | Parcel at the point: appellation, title, area, boundary points (LINZ Query API, layer 50772) |
 | `GET /api/environment?lat=&lon=` | Elevation, slope, aspect, indicative wind zone, climate normals |
 | `GET /api/terrain?lat=&lon=&size_m=&n=` | Elevation grid used by the 3D view |
+
+## 3D view (CesiumJS)
+
+The 3D view is a Cesium globe with the selected basemap draped over terrain, the parcel boundary clamped to the ground, extruded building footprints, a translucent sea plane and a vertical exaggeration slider. Terrain comes from the backend elevation grid (served to Cesium as a custom heightmap provider, clamped at the grid edge) or, if `VITE_CESIUM_ION_TOKEN` is set, from Cesium World Terrain. Cesium's workers and assets are served from `/cesium` (dev middleware / copied to `dist/cesium` on build, see `frontend/vite.config.ts`).
 
 ## Data caveats
 

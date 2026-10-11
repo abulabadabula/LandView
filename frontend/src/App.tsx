@@ -8,7 +8,7 @@ import RightPanel from "@/components/layout/RightPanel";
 import MapView from "@/components/map/MapView";
 import { useAppSelector } from "@/store";
 
-const ThreeView = lazy(() => import("@/components/three/ThreeView"));
+const CesiumView = lazy(() => import("@/components/cesium/CesiumView"));
 
 export default function App() {
   const viewMode = useAppSelector((s) => s.ui.viewMode);
@@ -23,7 +23,7 @@ export default function App() {
           {viewMode === "2d" ? (
             <MapView />
           ) : (
-            <Suspense fallback={null}><ThreeView /></Suspense>
+            <Suspense fallback={null}><CesiumView /></Suspense>
           )}
         </ResizablePanel>
         <ResizableHandle />
