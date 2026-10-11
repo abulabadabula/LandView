@@ -27,7 +27,7 @@ cp frontend/.env.example frontend/.env
 |---|---|---|
 | `backend/.env` | `LINZ_API_KEY` | **Required** for address, parcel and building-outline access. Get a free key from https://data.linz.govt.nz. |
 | `backend/.env` | `CORS_ORIGINS` | Allowed browser origins, comma separated. |
-| `backend/.env` | `LINZ_ADDRESS_LAYER`, `LINZ_PARCEL_LAYER`, `HTTP_TIMEOUT` | Optional overrides. |
+| `backend/.env` | `LINZ_ADDRESS_LAYER`, `LINZ_PARCEL_LAYER`, `LINZ_BUILDING_LAYER`, `HTTP_TIMEOUT` | Optional overrides; building outlines default to layer 101290. |
 | `backend/.env` | `OVERPASS_URL` | Optional override for the OpenStreetMap Overpass endpoint; defaults to `https://overpass-api.de/api/interpreter`. |
 | `frontend/.env` | `VITE_API_BASE_URL` | API base, default `/api`. |
 | `frontend/.env` | `VITE_DEV_PROXY_TARGET` | Backend URL for the Vite dev proxy, default `http://localhost:8000`. |
