@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://land-view-ebon.vercel.app/api/:path*" }
+  ]
+}
