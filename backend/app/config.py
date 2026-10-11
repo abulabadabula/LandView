@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     open_meteo_elevation_url: str = "https://api.open-meteo.com/v1/elevation"
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
+    overpass_url: str = "https://overpass-api.de/api/interpreter"
 
     http_timeout: float = 20.0
 
