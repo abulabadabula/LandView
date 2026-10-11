@@ -33,11 +33,46 @@ def _coordinates(element: dict) -> list[list[float]]:
     ]
 
 
+def _same_point(a: list[float], b: list[float]) -> bool:
+    return abs(a[0] - b[0]) < 1e-7 and abs(a[1] - b[1]) < 1e-7
+
+
 def _closed_ring(points: list[list[float]]) -> bool:
-    if len(points) < 4:
-        return False
-    first, last = points[0], points[-1]
-    return abs(first[0] - last[0]) < 1e-7 and abs(first[1] - last[1]) < 1e-7
+    return len(points) >= 4 and _same_point(points[0], points[-1])
+
+
+def _relation_outer_rings(element: dict) -> list[list[list[float]]]:
+    """Stitch outer member ways of an OSM water multipolygon into closed rings."""
+    segments = [
+        _coordinates(member)
+        for member in element.get("members", [])
+        if member.get("type") == "way" and member.get("role") in {"outer", ""}
+    ]
+    segments = [segment for segment in segments if len(segment) >= 2]
+    rings: list[list[list[float]]] = []
+
+    while segments:
+        current = segments.pop(0)
+        changed = True
+        while not _closed_ring(current) and changed:
+            changed = False
+            for index, segment in enumerate(segments):
+                if _same_point(current[-1], segment[0]):
+                    current.extend(segment[1:])
+                elif _same_point(current[-1], segment[-1]):
+                    current.extend(reversed(segment[:-1]))
+                elif _same_point(current[0], segment[-1]):
+                    current = segment[:-1] + current
+                elif _same_point(current[0], segment[0]):
+                    current = list(reversed(segment[1:])) + current
+                else:
+                    continue
+                segments.pop(index)
+                changed = True
+                break
+        if _closed_ring(current):
+            rings.append(current[:-1])
+    return rings
 
 
 async def context_around(lat: float, lon: float, size_m: float = 1000.0) -> ContextCollection:
@@ -58,6 +93,8 @@ async def context_around(lat: float, lon: float, size_m: float = 1000.0) -> Cont
       way["waterway"~"^(river|stream|canal|drain|ditch)$"]({bbox});
       way["natural"="water"]({bbox});
       way["landuse"="reservoir"]({bbox});
+      relation["natural"="water"]({bbox});
+      relation["landuse"="reservoir"]({bbox});
     );
     out body geom;
     """
@@ -75,6 +112,28 @@ async def context_around(lat: float, lon: float, size_m: float = 1000.0) -> Cont
     features: list[ContextFeature] = []
     for element in elements:
         tags = element.get("tags", {})
+        is_waterbody = tags.get("natural") == "water" or tags.get("landuse") == "reservoir"
+
+        # Water polygons are often mapped as multipolygon relations rather than a
+        # single closed way. Stitch member outer rings before creating the feature.
+        if element.get("type") == "relation" and is_waterbody:
+            for ring_index, ring in enumerate(_relation_outer_rings(element)):
+                features.append(
+                    ContextFeature(
+                        id=f"relation/{element.get('id', 'water')}/{ring_index}",
+                        kind="waterbody",
+                        coordinates=ring,
+                        name=tags.get("name"),
+                        subtype=str(tags.get("natural") or tags.get("landuse")),
+                        width_m=None,
+                    )
+                )
+                if len(features) >= MAX_FEATURES:
+                    break
+            if len(features) >= MAX_FEATURES:
+                break
+            continue
+
         points = _coordinates(element)
         if len(points) < 2:
             continue
@@ -90,7 +149,7 @@ async def context_around(lat: float, lon: float, size_m: float = 1000.0) -> Cont
             kind = "waterway"
             subtype = str(tags["waterway"])
             width_m = _width_m(tags.get("width"))
-        elif tags.get("natural") == "water" or tags.get("landuse") == "reservoir":
+        elif is_waterbody:
             if not _closed_ring(points):
                 continue
             kind = "waterbody"
