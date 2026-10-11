@@ -12,8 +12,9 @@ class Settings(BaseSettings):
     linz_api_key: str = ""
     linz_wfs_url: str = "https://data.linz.govt.nz/services;key={key}/wfs"
     linz_query_url: str = "https://data.linz.govt.nz/services/query/v1/vector.json"
-    linz_address_layer: str = "123113"  # NZ Street Address
+    linz_address_layer: str = "123113"  # NZ Addresses
     linz_parcel_layer: str = "50772"  # NZ Primary Parcels
+    linz_building_layer: str = "101290"  # NZ Building Outlines
 
     open_meteo_elevation_url: str = "https://api.open-meteo.com/v1/elevation"
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
