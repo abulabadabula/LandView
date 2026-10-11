@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -84,3 +84,20 @@ class Building(CamelModel):
 class BuildingCollection(CamelModel):
     buildings: list[Building]
     osm_available: bool  # False when the storey lookup failed and every height is assumed
+
+
+class ContextFeature(CamelModel):
+    """A ground-clamped context feature returned from OpenStreetMap Overpass."""
+
+    id: str
+    kind: Literal["road", "waterway", "waterbody"]
+    # Line coordinates for roads/waterways; one exterior ring for waterbody polygons.
+    coordinates: list[list[float]]
+    name: str | None = None
+    subtype: str | None = None
+    width_m: float | None = None
+
+
+class ContextCollection(CamelModel):
+    features: list[ContextFeature]
+    osm_available: bool
