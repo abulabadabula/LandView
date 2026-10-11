@@ -47,7 +47,7 @@ async def environment_at(lat: float, lon: float) -> Environment:
     )
 
 
-async def terrain_grid(lat: float, lon: float, size_m: float = 1000.0, n: int = 25) -> TerrainGrid:
+async def terrain_grid(lat: float, lon: float, size_m: float = 1000.0, n: int = 33) -> TerrainGrid:
     pts = [
         offset_latlon(lat, lon, (c / (n - 1) - 0.5) * size_m, (r / (n - 1) - 0.5) * size_m)
         for r in range(n)
