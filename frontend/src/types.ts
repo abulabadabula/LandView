@@ -43,5 +43,17 @@ export interface Building {
 }
 export interface BuildingCollection { buildings: Building[]; osmAvailable: boolean }
 
+export type ContextFeatureKind = "road" | "waterway" | "waterbody";
+export interface ContextFeature {
+  id: string;
+  kind: ContextFeatureKind;
+  /** [lon, lat] sequence; waterbody rings are not closed */
+  coordinates: [number, number][];
+  name: string | null;
+  subtype: string | null;
+  widthM: number | null;
+}
+export interface ContextCollection { features: ContextFeature[]; osmAvailable: boolean }
+
 export type ViewMode = "2d" | "3d";
 export type Basemap = "streets" | "aerial" | "topo";
