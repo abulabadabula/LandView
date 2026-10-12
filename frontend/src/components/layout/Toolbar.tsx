@@ -31,7 +31,7 @@ export default function Toolbar() {
         variant={localModelActive ? "default" : "outline"}
         disabled={!selected || surroundingsLoading}
         onClick={showLocalModel}
-        title="Show buildings and terrain within 100 metres of the selected address"
+        title="Show terrain and buildings in a 200 m square centred on the selected address"
       >
         <Building2 /> 100 m 3D model
       </Button>

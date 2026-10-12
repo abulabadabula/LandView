@@ -12,7 +12,7 @@ Search a New Zealand address, inspect its parcel and environmental context, and 
 
 The application has a header and toolbar, with resizable left/right information panels surrounding the main canvas.
 The left panel lists the selected lot, boundary points, topography and environmental information.
-The toolbar includes a **100 m 3D model** button. It loads a 200 m × 200 m square centred on the selected address (100 m radius), using a denser terrain grid and optional LiDAR DSM/DEM building-height estimates. The right panel controls the basemap and 3D scene, including vertical exaggeration, visible layers, and context coverage width (100 m radius to 3 km). Changing the coverage reloads terrain and nearby features around the selected address.
+The toolbar includes a **100 m 3D model** button. It loads a 200 m × 200 m square centred on the selected address (100 m from the centre in each cardinal direction), using a denser terrain grid and optional LiDAR DSM/DEM building-height estimates. The right panel controls the basemap and 3D scene, including vertical exaggeration, visible layers, and context coverage width (200 m square to 3 km). Changing the coverage reloads terrain and nearby features around the selected address.
 
 ## Environment parameters
 

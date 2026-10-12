@@ -239,7 +239,7 @@ export default function CesiumView() {
       viewer.scene.requestRender();
       return;
     }
-    const isLinzGrid = terrain.source.toLowerCase().includes("linz");
+    const isLinzGrid = terrain.source.toLowerCase().startsWith("linz");
     if (isLinzGrid || !ION_TOKEN) {
       viewer.terrainProvider = gridTerrain(terrain);
       viewer.scene.requestRender();
@@ -301,10 +301,11 @@ export default function CesiumView() {
     if (showBuildings && buildings?.buildings.length) {
       for (const building of buildings.buildings) {
         if (building.ring.length < 3) continue;
-        const mappedHeight = building.storeysSource === "osm";
+        const mappedHeight = building.heightSource === "osm_height" || building.heightSource === "osm_levels";
+        const lidarHeight = building.heightSource === "lidar_estimated";
         viewer.entities.add({
           id: `building-${building.id ?? "unknown"}-${building.ring[0]?.[0]}-${building.ring[0]?.[1]}`,
-          name: building.use ?? (mappedHeight ? "Building (mapped height)" : "Building (estimated height)"),
+          name: building.use ?? (mappedHeight ? "Building (OSM height)" : lidarHeight ? "Building (LiDAR-estimated height)" : "Building (assumed height)"),
           polygon: {
             hierarchy: Cartesian3.fromDegreesArray(building.ring.flat()),
             height: 0,
@@ -313,7 +314,9 @@ export default function CesiumView() {
             extrudedHeightReference: HeightReference.RELATIVE_TO_GROUND,
             material: (mappedHeight
               ? Color.fromCssColorString("#aebdca")
-              : Color.fromCssColorString("#cbbda5")).withAlpha(0.98),
+              : lidarHeight
+                ? Color.fromCssColorString("#91b6a0")
+                : Color.fromCssColorString("#cbbda5")).withAlpha(0.98),
             outline: true,
             outlineColor: Color.fromCssColorString("#5d6b75").withAlpha(0.95),
           },

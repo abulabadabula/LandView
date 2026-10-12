@@ -54,5 +54,5 @@ async def terrain_grid(lat: float, lon: float, size_m: float = 1000.0, n: int = 
         for r in range(n)
         for c in range(n)
     ]
-    z = await elevation.elevations(pts, size_m / (n - 1))
-    return TerrainGrid(center_lat=lat, center_lon=lon, size_m=size_m, n=n, elevations=z, min_elevation=min(z), max_elevation=max(z), source=elevation.source_name())
+    z, source = await elevation.elevations_with_source(pts, size_m / (n - 1))
+    return TerrainGrid(center_lat=lat, center_lon=lon, size_m=size_m, n=n, elevations=z, min_elevation=min(z), max_elevation=max(z), source=source)

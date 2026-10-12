@@ -40,7 +40,8 @@ def _decode(png: bytes) -> np.ndarray:
     img = Image.open(io.BytesIO(png)).convert("RGBA")
     rgba = np.asarray(img, dtype=np.float64)
     h = -10000.0 + (rgba[..., 0] * 65536.0 + rgba[..., 1] * 256.0 + rgba[..., 2]) * 0.1
-    h[rgba[..., 3] == 0] = np.nan
+    # Out-of-coverage tiles may return the basemap background RGB, which is not a real elevation.
+    h[(rgba[..., 3] == 0) | (h < -1000.0)] = np.nan
     return h.astype(np.float32)
 
 

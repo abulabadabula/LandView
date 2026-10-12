@@ -13,7 +13,7 @@ import { hasLinzBasemaps } from "@/lib/basemaps";
 import type { Basemap } from "@/types";
 
 const COVERAGE_OPTIONS = [
-  { value: 200, label: "100 m radius (200 m × 200 m)" },
+  { value: 200, label: "100 m in each direction (200 m × 200 m)" },
   { value: 500, label: "500 m × 500 m" },
   { value: 1000, label: "1 km × 1 km" },
   { value: 1500, label: "1.5 km × 1.5 km" },
