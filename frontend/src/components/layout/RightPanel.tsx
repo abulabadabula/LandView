@@ -13,6 +13,7 @@ import { hasLinzBasemaps } from "@/lib/basemaps";
 import type { Basemap } from "@/types";
 
 const COVERAGE_OPTIONS = [
+  { value: 200, label: "100 m radius (200 m × 200 m)" },
   { value: 500, label: "500 m × 500 m" },
   { value: 1000, label: "1 km × 1 km" },
   { value: 1500, label: "1.5 km × 1.5 km" },
@@ -33,7 +34,8 @@ export default function RightPanel() {
     coverageSizeM,
   } = useAppSelector((s) => s.ui);
   const { buildings, context, selected, status, surroundingsLoading } = useAppSelector((s) => s.lot);
-  const tagged = buildings?.buildings.filter((b) => b.storeysSource === "osm").length ?? 0;
+  const tagged = buildings?.buildings.filter((b) => b.heightSource === "osm_height" || b.heightSource === "osm_levels").length ?? 0;
+  const lidarHeights = buildings?.buildings.filter((b) => b.heightSource === "lidar_estimated").length ?? 0;
   const options: { id: Basemap; label: string; needsKey?: boolean }[] = [
     { id: "streets", label: "Streets (OpenStreetMap)" },
     { id: "aerial", label: "Aerial (LINZ)", needsKey: true },
@@ -131,7 +133,7 @@ export default function RightPanel() {
           <h3 className="mb-2 font-semibold">Building model</h3>
           <p>{buildings.buildings.length} footprints in the selected coverage</p>
           <p className="text-muted-foreground">
-            {tagged} with OpenStreetMap height/levels data, {buildings.buildings.length - tagged} estimated
+            {tagged} with OSM height/levels, {lidarHeights} LiDAR-derived, {buildings.buildings.length - tagged - lidarHeights} assumed
           </p>
           {!buildings.osmAvailable && (
             <p className="mt-1 text-xs text-destructive">
@@ -139,7 +141,7 @@ export default function RightPanel() {
             </p>
           )}
           <p className="mt-1 text-xs text-muted-foreground">
-            Where height data is absent, the viewer estimates storeys from footprint use and area.
+            In the 100 m model, LINZ DSM roof samples minus bare-earth DEM samples are used when available. Otherwise OSM levels or indicative defaults are used.
           </p>
         </div>
       )}

@@ -24,8 +24,8 @@ export const api = {
   searchAddresses: (q: string) => get<AddressResult[]>("/address/search", { q }),
   getLot: (lat: number, lon: number) => get<Parcel | null>("/lot", { lat, lon }),
   getEnvironment: (lat: number, lon: number) => get<Environment>("/environment", { lat, lon }),
-  getTerrain: (lat: number, lon: number, sizeM = 1000) =>
-    get<TerrainGrid>("/terrain", { lat, lon, size_m: sizeM, n: 33 }),
+  getTerrain: (lat: number, lon: number, sizeM = 1000, n = 33) =>
+    get<TerrainGrid>("/terrain", { lat, lon, size_m: sizeM, n }),
   getBuildings: (lat: number, lon: number, sizeM = 1000) =>
     get<BuildingCollection>("/buildings", { lat, lon, size_m: sizeM }),
   getContext: (lat: number, lon: number, sizeM = 1000) =>

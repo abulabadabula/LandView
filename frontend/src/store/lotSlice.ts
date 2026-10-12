@@ -54,9 +54,9 @@ export const loadLot = createAsyncThunk("lot/load", async (address: AddressResul
 
 export const loadSurroundings = createAsyncThunk(
   "lot/loadSurroundings",
-  async ({ address, sizeM }: { address: AddressResult; sizeM: number }) => {
+  async ({ address, sizeM, detailed = false }: { address: AddressResult; sizeM: number; detailed?: boolean }) => {
     const [terrain, buildings, context] = await Promise.all([
-      api.getTerrain(address.lat, address.lon, sizeM),
+      api.getTerrain(address.lat, address.lon, sizeM, detailed ? 129 : 33),
       api.getBuildings(address.lat, address.lon, sizeM).catch(() => null),
       api.getContext(address.lat, address.lon, sizeM).catch(() => null),
     ]);

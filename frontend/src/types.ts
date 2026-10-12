@@ -29,14 +29,17 @@ export interface TerrainGrid {
   elevations: number[];
   minElevation: number;
   maxElevation: number;
+  source: string;
 }
 
 export interface Building {
   id: number | null;
   areaM2: number;
   storeys: number;
-  storeysSource: "osm" | "assumed";
+  storeysSource: "osm" | "lidar" | "assumed";
   heightM: number;
+  heightSource: "osm_height" | "osm_levels" | "lidar_estimated" | "assumed" | string;
+  heightConfidence: "high" | "medium" | "low" | string;
   use: string | null;
   /** [lon, lat] exterior ring, not closed */
   ring: [number, number][];

@@ -12,7 +12,7 @@ Search a New Zealand address, inspect its parcel and environmental context, and 
 
 The application has a header and toolbar, with resizable left/right information panels surrounding the main canvas.
 The left panel lists the selected lot, boundary points, topography and environmental information.
-The right panel controls the basemap and 3D scene, including vertical exaggeration, visible layers, and context coverage width (500 m to 3 km). Changing the coverage reloads terrain and nearby features around the selected address.
+The toolbar includes a **100 m 3D model** button. It loads a 200 m × 200 m square centred on the selected address (100 m radius), using a denser terrain grid and optional LiDAR DSM/DEM building-height estimates. The right panel controls the basemap and 3D scene, including vertical exaggeration, visible layers, and context coverage width (100 m radius to 3 km). Changing the coverage reloads terrain and nearby features around the selected address.
 
 ## Environment parameters
 
@@ -26,6 +26,7 @@ cp frontend/.env.example frontend/.env
 | File | Variable | Purpose |
 |---|---|---|
 | `backend/.env` | `LINZ_API_KEY` | **Required** for address, parcel and building-outline access. Get a free key from https://data.linz.govt.nz. |
+| `backend/.env` | `LINZ_BASEMAPS_KEY` | Enables LINZ national LiDAR DEM/DSM Terrain-RGB tiles for detailed terrain and building-height estimates. |
 | `backend/.env` | `CORS_ORIGINS` | Allowed browser origins, comma separated. |
 | `backend/.env` | `LINZ_ADDRESS_LAYER`, `LINZ_PARCEL_LAYER`, `LINZ_BUILDING_LAYER`, `HTTP_TIMEOUT` | Optional overrides; building outlines default to layer 101290. |
 | `backend/.env` | `OVERPASS_URL` | Optional override for the OpenStreetMap Overpass endpoint; defaults to `https://overpass-api.de/api/interpreter`. |
@@ -72,7 +73,7 @@ Cesium workers and assets are served from `/cesium` (see `frontend/vite.config.t
 
 ## Data limitations and attribution
 
-- **Terrain fallback is for visualisation only.** Without `VITE_CESIUM_ION_TOKEN`, the scene interpolates the backend elevation grid from Open-Meteo elevation samples. These are based on a coarse global DEM and do not provide lot-scale LiDAR detail. For high-detail terrain, configure a terrain provider backed by suitable LINZ LiDAR DEM coverage or use Cesium World Terrain where its resolution/coverage meets the purpose. Do not use the fallback grid for surveying, earthworks quantities or engineering design.
+- **Terrain fallback is for visualisation only.** With `LINZ_BASEMAPS_KEY`, the detailed local scene samples LINZ LiDAR-derived DEM tiles. Without it, the backend limits grid density and uses Open-Meteo elevation samples, which rely on a coarse global DEM and do not provide lot-scale LiDAR detail. For high-detail terrain, configure a terrain provider backed by suitable LINZ LiDAR DEM coverage or use Cesium World Terrain where its resolution/coverage meets the purpose. Do not use the fallback grid for surveying, earthworks quantities or engineering design.
 - LINZ publishes New Zealand LiDAR-based elevation data for much of the country. The available resolution and capture date vary by location; verify coverage and the dataset metadata before relying on it. See [LINZ elevation data access](https://www.linz.govt.nz/products-services/data/types-linz-data/elevation-data/access-elevation-data).
 - **Building heights are not complete national attributes.** Heights/levels are taken from tagged OpenStreetMap buildings when a nearby match can be made; otherwise they are estimated using footprint use/area and a nominal storey height. The 3D massing is indicative, not a verified building survey.
 - Road and hydrography lines/polygons come from OpenStreetMap's Overpass API and will reflect only mapped features available there. Water multipolygon outer rings are stitched from their member ways; inner holes are not modelled in this first version. Respect [OpenStreetMap attribution and usage guidance](https://www.openstreetmap.org/copyright).

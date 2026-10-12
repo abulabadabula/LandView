@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     linz_parcel_layer: str = "50772"  # NZ Primary Parcels
     linz_building_layer: str = "101290"  # NZ Building Outlines
 
+    # LINZ Basemaps Terrain-RGB services. DEM is bare-earth terrain; DSM includes roofs/vegetation.
+    linz_basemaps_key: str = ""
+    linz_elevation_tile_url: str = "https://basemaps.linz.govt.nz/v1/tiles/elevation/WebMercatorQuad/{z}/{x}/{y}.png"
+    linz_dsm_tile_url: str = "https://basemaps.linz.govt.nz/v1/tiles/elevation-dsm/WebMercatorQuad/{z}/{x}/{y}.png"
+
     open_meteo_elevation_url: str = "https://api.open-meteo.com/v1/elevation"
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
     overpass_url: str = "https://overpass-api.de/api/interpreter"

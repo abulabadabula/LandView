@@ -1,34 +1,27 @@
-"""LINZ LiDAR-derived DEM, read from LINZ Basemaps' `elevation` tile set (Terrain-RGB).
-
-Tiles are fetched as PNG with ``pipeline=terrain-rgb`` and decoded to metres:
-
-    height_m = -10000 + (R * 65536 + G * 256 + B) * 0.1
-
-Pixels with alpha == 0 are "no data" (outside LiDAR coverage, or open sea).
-"""
+"""Read LINZ DEM/DSM Terrain-RGB tiles and sample elevations in metres."""
 import asyncio
+import io
 import math
 
 import httpx
 import numpy as np
 from PIL import Image
-import io
 
 from app.config import get_settings
 from app.services.errors import UpstreamError
 
 _TILE = 256
-_MIN_Z, _MAX_Z = 10, 17
+_MIN_Z, _MAX_Z = 10, 18
 _MAX_RETRIES = 3
 _CONCURRENCY = 8
 
-# (z, x, y) -> float32[256, 256] elevation array (NaN = no data), or None if the tile does not exist.
-_tile_cache: dict[tuple[int, int, int], np.ndarray | None] = {}
+# (surface, z, x, y) -> float32 tile; None means there is no source tile.
+_tile_cache: dict[tuple[str, int, int, int], np.ndarray | None] = {}
 _sem = asyncio.Semaphore(_CONCURRENCY)
 
 
 def choose_zoom(lat: float, spacing_m: float) -> int:
-    """Pick a zoom whose pixel size is ~1/3 of the requested sample spacing."""
+    """Choose a web-mercator zoom with pixel size near one third of sample spacing."""
     target_px_m = max(spacing_m / 3.0, 0.1)
     z = math.floor(math.log2(156543.03 * math.cos(math.radians(lat)) / target_px_m))
     return max(_MIN_Z, min(_MAX_Z, z))
@@ -43,94 +36,132 @@ def _global_pixel(lat: float, lon: float, z: int) -> tuple[float, float]:
 
 
 def _decode(png: bytes) -> np.ndarray:
+    """Decode Mapbox Terrain-RGB into metres."""
     img = Image.open(io.BytesIO(png)).convert("RGBA")
-    a = np.asarray(img, dtype=np.float64)
-    h = -10000.0 + (a[..., 0] * 65536.0 + a[..., 1] * 256.0 + a[..., 2]) * 0.1
-    h[a[..., 3] == 0] = np.nan
+    rgba = np.asarray(img, dtype=np.float64)
+    h = -10000.0 + (rgba[..., 0] * 65536.0 + rgba[..., 1] * 256.0 + rgba[..., 2]) * 0.1
+    h[rgba[..., 3] == 0] = np.nan
     return h.astype(np.float32)
 
 
-async def _fetch_tile(client: httpx.AsyncClient, z: int, x: int, y: int) -> np.ndarray | None:
-    key = (z, x, y)
+async def _fetch_tile(
+    client: httpx.AsyncClient,
+    surface: str,
+    z: int,
+    x: int,
+    y: int,
+) -> np.ndarray | None:
+    key = (surface, z, x, y)
     if key in _tile_cache:
         return _tile_cache[key]
-    s = get_settings()
-    url = s.linz_elevation_tile_url.format(z=z, x=x, y=y)
-    params = {"api": s.linz_basemaps_key, "pipeline": "terrain-rgb"}
+
+    settings = get_settings()
+    template = settings.linz_dsm_tile_url if surface == "dsm" else settings.linz_elevation_tile_url
+    url = template.format(z=z, x=x, y=y)
+    params = {"api": settings.linz_basemaps_key, "pipeline": "terrain-rgb"}
+
     async with _sem:
         for attempt in range(_MAX_RETRIES + 1):
             try:
-                r = await client.get(url, params=params)
-                if r.status_code == 404:
+                response = await client.get(url, params=params)
+                if response.status_code == 404:
                     _tile_cache[key] = None
                     return None
-                if r.status_code in (429, 502, 503, 504) and attempt < _MAX_RETRIES:
-                    await asyncio.sleep(min(6.0, 0.75 * 2**attempt))
+                if response.status_code in (429, 502, 503, 504) and attempt < _MAX_RETRIES:
+                    await asyncio.sleep(min(6.0, 0.75 * (2**attempt)))
                     continue
-                r.raise_for_status()
-                arr = _decode(r.content)
-                _tile_cache[key] = arr
-                return arr
+                response.raise_for_status()
+                tile = _decode(response.content)
+                _tile_cache[key] = tile
+                return tile
             except httpx.TransportError:
                 if attempt >= _MAX_RETRIES:
                     raise
-                await asyncio.sleep(min(6.0, 0.75 * 2**attempt))
-    raise RuntimeError("tile retry loop ended unexpectedly")
+                await asyncio.sleep(min(6.0, 0.75 * (2**attempt)))
+
+    raise RuntimeError("LINZ tile retry loop ended unexpectedly")
 
 
-def _px(tiles: dict[tuple[int, int, int], np.ndarray | None], z: int, ix: int, iy: int) -> float:
-    t = tiles.get((z, ix // _TILE, iy // _TILE))
-    return float("nan") if t is None else float(t[iy % _TILE, ix % _TILE])
+def _pixel(
+    tiles: dict[tuple[str, int, int, int], np.ndarray | None],
+    surface: str,
+    z: int,
+    pixel_x: int,
+    pixel_y: int,
+) -> float:
+    tile = tiles.get((surface, z, pixel_x // _TILE, pixel_y // _TILE))
+    if tile is None:
+        return float("nan")
+    return float(tile[pixel_y % _TILE, pixel_x % _TILE])
 
 
-def _sample(tiles, z: int, x: float, y: float) -> float:
-    """Bilinear sample at global pixel coords (pixel centres at +0.5); NaN-aware."""
+def _sample(
+    tiles: dict[tuple[str, int, int, int], np.ndarray | None],
+    surface: str,
+    z: int,
+    x: float,
+    y: float,
+) -> float:
+    """Bilinear, no-data-aware sample; pixel centres are at global coordinate +0.5."""
     fx, fy = x - 0.5, y - 0.5
     x0, y0 = math.floor(fx), math.floor(fy)
     tx, ty = fx - x0, fy - y0
-    vals = (
-        (_px(tiles, z, x0, y0), (1 - tx) * (1 - ty)),
-        (_px(tiles, z, x0 + 1, y0), tx * (1 - ty)),
-        (_px(tiles, z, x0, y0 + 1), (1 - tx) * ty),
-        (_px(tiles, z, x0 + 1, y0 + 1), tx * ty),
+    weighted = (
+        (_pixel(tiles, surface, z, x0, y0), (1 - tx) * (1 - ty)),
+        (_pixel(tiles, surface, z, x0 + 1, y0), tx * (1 - ty)),
+        (_pixel(tiles, surface, z, x0, y0 + 1), (1 - tx) * ty),
+        (_pixel(tiles, surface, z, x0 + 1, y0 + 1), tx * ty),
     )
-    num = den = 0.0
-    for v, w in vals:
-        if not math.isnan(v):
-            num += v * w
-            den += w
-    return num / den if den > 0 else float("nan")
+    numerator = denominator = 0.0
+    for value, weight in weighted:
+        if not math.isnan(value):
+            numerator += value * weight
+            denominator += weight
+    return numerator / denominator if denominator > 0 else float("nan")
 
 
-async def elevations(points: list[tuple[float, float]], spacing_m: float = 25.0) -> list[float]:
-    """Elevation (m, NZVD2016-ish LiDAR DEM) for (lat, lon) points.
+async def elevations(
+    points: list[tuple[float, float]],
+    spacing_m: float = 25.0,
+    surface: str = "dem",
+    allow_nodata: bool = False,
+) -> list[float | None]:
+    """Sample DEM or DSM elevations for (latitude, longitude) points.
 
-    Cells with no LiDAR data (e.g. open water) are returned as 0.0 (sea level) so the
-    3D scene shows water there. Raises UpstreamError if every point is no-data.
+    allow_nodata=True returns None for uncovered pixels. Terrain generation defaults
+    missing ocean/out-of-coverage values to sea level, while height estimation excludes them.
     """
-    if not get_settings().linz_basemaps_key:
+    if surface not in {"dem", "dsm"}:
+        raise ValueError("surface must be 'dem' or 'dsm'")
+    settings = get_settings()
+    if not settings.linz_basemaps_key:
         raise UpstreamError("LINZ_BASEMAPS_KEY is not set. Add it to backend/.env.", 503)
     if not points:
         return []
 
-    z = choose_zoom(sum(p[0] for p in points) / len(points), spacing_m)
-    pix = [_global_pixel(la, lo, z) for la, lo in points]
+    mean_lat = sum(point[0] for point in points) / len(points)
+    z = choose_zoom(mean_lat, spacing_m)
+    pixels = [_global_pixel(lat, lon, z) for lat, lon in points]
 
-    needed: set[tuple[int, int, int]] = set()
-    for x, y in pix:
+    needed: set[tuple[str, int, int, int]] = set()
+    for x, y in pixels:
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                needed.add((z, int((x + dx) // _TILE), int((y + dy) // _TILE)))
+                needed.add((surface, z, int((x + dx) // _TILE), int((y + dy) // _TILE)))
 
+    keys = sorted(needed)
     try:
-        async with httpx.AsyncClient(timeout=max(get_settings().http_timeout, 30)) as client:
-            keys = sorted(needed)
-            results = await asyncio.gather(*(_fetch_tile(client, *k) for k in keys))
-    except (httpx.HTTPError, ValueError, OSError) as e:
-        raise UpstreamError(f"LINZ elevation tiles failed: {e}") from e
-    tiles = dict(zip(keys, results))
+        async with httpx.AsyncClient(timeout=max(settings.http_timeout, 30)) as client:
+            results = await asyncio.gather(
+                *(_fetch_tile(client, surface, tile_z, tile_x, tile_y) for _, tile_z, tile_x, tile_y in keys)
+            )
+    except (httpx.HTTPError, ValueError, OSError) as error:
+        raise UpstreamError("LINZ " + surface.upper() + " tiles failed: " + str(error)) from error
 
-    out = [_sample(tiles, z, x, y) for x, y in pix]
-    if all(math.isnan(v) for v in out):
-        raise UpstreamError("No LINZ LiDAR elevation coverage at this location.", 404)
-    return [0.0 if math.isnan(v) else round(v, 2) for v in out]
+    tiles = dict(zip(keys, results))
+    sampled = [_sample(tiles, surface, z, x, y) for x, y in pixels]
+    if all(math.isnan(value) for value in sampled) and not allow_nodata:
+        raise UpstreamError("No LINZ " + surface.upper() + " elevation coverage at this location.", 404)
+    if allow_nodata:
+        return [None if math.isnan(value) else round(value, 2) for value in sampled]
+    return [0.0 if math.isnan(value) else round(value, 2) for value in sampled]

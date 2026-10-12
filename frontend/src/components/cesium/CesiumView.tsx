@@ -228,8 +228,8 @@ export default function CesiumView() {
     viewer.scene.requestRender();
   }, [basemap]);
 
-  // Prefer Cesium World Terrain (higher-detail streaming terrain) when an Ion token is configured.
-  // Without a token, use the backend elevation grid as a local terrain fallback.
+  // Use the detailed local grid when it is based on LINZ data. World Terrain is
+  // only preferred for coarse fallback data when an Ion token is configured.
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -239,24 +239,25 @@ export default function CesiumView() {
       viewer.scene.requestRender();
       return;
     }
-    if (ION_TOKEN) {
-      createWorldTerrainAsync()
-        .then((provider) => {
-          if (!cancelled && viewerRef.current) {
-            viewerRef.current.terrainProvider = provider;
-            viewerRef.current.scene.requestRender();
-          }
-        })
-        .catch(() => {
-          if (!cancelled && viewerRef.current) {
-            viewerRef.current.terrainProvider = gridTerrain(terrain);
-            viewerRef.current.scene.requestRender();
-          }
-        });
-    } else {
+    const isLinzGrid = terrain.source.toLowerCase().includes("linz");
+    if (isLinzGrid || !ION_TOKEN) {
       viewer.terrainProvider = gridTerrain(terrain);
       viewer.scene.requestRender();
+      return;
     }
+    createWorldTerrainAsync()
+      .then((provider) => {
+        if (!cancelled && viewerRef.current) {
+          viewerRef.current.terrainProvider = provider;
+          viewerRef.current.scene.requestRender();
+        }
+      })
+      .catch(() => {
+        if (!cancelled && viewerRef.current) {
+          viewerRef.current.terrainProvider = gridTerrain(terrain);
+          viewerRef.current.scene.requestRender();
+        }
+      });
     return () => { cancelled = true; };
   }, [terrain]);
 
@@ -399,10 +400,11 @@ export default function CesiumView() {
       )}
       {terrain && (
         <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md border border-white/30 bg-slate-950/75 px-3 py-2 text-xs text-white shadow">
-          <div className="font-medium">3D terrain · {(terrain.sizeM / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} km coverage</div>
+          <div className="font-medium">3D terrain · {terrain.sizeM} m × {terrain.sizeM} m</div>
+          <div className="mt-0.5 text-white/80">Elevation source: {terrain.source}</div>
           <div className="mt-0.5 text-white/80">Left-drag to rotate · Right-drag to tilt · Scroll to zoom</div>
-          {!ION_TOKEN && (
-            <div className="mt-0.5 text-amber-200">Using the available elevation grid; add a Cesium ion token for streamed high-detail terrain.</div>
+          {terrain.source.toLowerCase().includes("open-meteo") && (
+            <div className="mt-0.5 text-amber-200">Coarse fallback elevation data: local ground detail is limited. Configure LINZ_BASEMAPS_KEY for LiDAR coverage.</div>
           )}
         </div>
       )}

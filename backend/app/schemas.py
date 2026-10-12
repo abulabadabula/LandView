@@ -69,14 +69,17 @@ class TerrainGrid(CamelModel):
     elevations: list[float]  # row-major, rows south->north, columns west->east
     min_elevation: float
     max_elevation: float
+    source: str = "unknown"
 
 
 class Building(CamelModel):
     id: int | None = None
     area_m2: float
     storeys: int
-    storeys_source: str  # "osm" (tagged) or "assumed" (estimated)
+    storeys_source: str  # "osm", "lidar", or "assumed"
     height_m: float
+    height_source: str = "assumed"
+    height_confidence: str = "low"
     use: str | None = None
     ring: list[list[float]]  # [lon, lat] exterior ring, not closed
 

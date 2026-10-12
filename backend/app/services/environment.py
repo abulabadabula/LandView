@@ -1,5 +1,6 @@
 import math
 
+from app.config import get_settings
 from app.schemas import Climate, Environment, TerrainGrid, Topography, WindInfo
 from app.services import elevation, openmeteo
 from app.services.geo import offset_latlon
@@ -44,11 +45,14 @@ async def environment_at(lat: float, lon: float) -> Environment:
     )
 
 async def terrain_grid(lat: float, lon: float, size_m: float = 1000.0, n: int = 25) -> TerrainGrid:
-    """Build a terrain grid from the LINZ LiDAR DEM (Open-Meteo fallback if no Basemaps key)."""
+    """Build a local terrain grid, preferring LINZ LiDAR DEM where configured."""
+    # Open-Meteo is a coarse global DEM. Cap fallback sampling to avoid hundreds of requests.
+    if not get_settings().linz_basemaps_key:
+        n = min(n, 33)
     pts = [
         offset_latlon(lat, lon, (c / (n - 1) - 0.5) * size_m, (r / (n - 1) - 0.5) * size_m)
         for r in range(n)
         for c in range(n)
     ]
     z = await elevation.elevations(pts, size_m / (n - 1))
-    return TerrainGrid(center_lat=lat, center_lon=lon, size_m=size_m, n=n, elevations=z, min_elevation=min(z), max_elevation=max(z))
+    return TerrainGrid(center_lat=lat, center_lon=lon, size_m=size_m, n=n, elevations=z, min_elevation=min(z), max_elevation=max(z), source=elevation.source_name())
