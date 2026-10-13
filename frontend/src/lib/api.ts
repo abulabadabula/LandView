@@ -26,8 +26,34 @@ export const api = {
   getEnvironment: (lat: number, lon: number) => get<Environment>("/environment", { lat, lon }),
   getTerrain: (lat: number, lon: number, sizeM = 1000, n = 33) =>
     get<TerrainGrid>("/terrain", { lat, lon, size_m: sizeM, n }),
-  getBuildings: (lat: number, lon: number, sizeM = 1000) =>
-    get<BuildingCollection>("/buildings", { lat, lon, size_m: sizeM }),
+  getBuildings: async (lat: number, lon: number, sizeM = 1000) => {
+    const startedAt = performance.now();
+    console.info("[LandView][buildings-api] request_start", { lat, lon, sizeM });
+    try {
+      const data = await get<BuildingCollection>("/buildings", { lat, lon, size_m: sizeM });
+      console.info("[LandView][buildings-api] response_success", {
+        durationMs: Math.round(performance.now() - startedAt),
+        buildingCount: data.buildings.length,
+        osmAvailable: data.osmAvailable,
+        sampleBuilding: data.buildings[0]
+          ? {
+              id: data.buildings[0].id,
+              ringPointCount: data.buildings[0].ring.length,
+              firstPoint: data.buildings[0].ring[0],
+              heightM: data.buildings[0].heightM,
+              heightSource: data.buildings[0].heightSource,
+            }
+          : null,
+      });
+      return data;
+    } catch (error) {
+      console.error("[LandView][buildings-api] response_failed", {
+        durationMs: Math.round(performance.now() - startedAt),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  },
   getContext: (lat: number, lon: number, sizeM = 1000) =>
     get<ContextCollection>("/context", { lat, lon, size_m: sizeM }),
 };
