@@ -1,5 +1,6 @@
 """LINZ footprints enriched with OSM attributes and optional LiDAR-derived heights."""
 import asyncio
+import logging
 import math
 import re
 
@@ -20,6 +21,7 @@ MIN_AREA_M2 = 12.0
 MAX_BUILDINGS = 2500
 MAX_ROOF_SAMPLES = 48
 _FROM_NZTM = Transformer.from_crs(2193, 4326, always_xy=True)
+logger = logging.getLogger(__name__)
 
 
 def _num(value) -> float | None:
@@ -44,7 +46,8 @@ async def _osm_levels(w: float, s: float, e: float, n: float):
             response = await client.post(get_settings().overpass_url, data={"data": query})
             response.raise_for_status()
             elements = response.json()["elements"]
-    except (httpx.HTTPError, KeyError, ValueError):
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        logger.warning("[LandView][OSM-buildings] levels_query_failed bbox=(%.6f, %.6f, %.6f, %.6f) error=%s", w, s, e, n, exc)
         return None
 
     out = []
@@ -53,6 +56,7 @@ async def _osm_levels(w: float, s: float, e: float, n: float):
         info = _levels(element.get("tags", {}))
         if center and info:
             out.append((Point(*to_nztm(center["lon"], center["lat"])), info))
+    logger.info("[LandView][OSM-buildings] levels_query_success raw_elements=%s tagged_buildings=%s", len(elements), len(out))
     return out
 
 
@@ -124,9 +128,11 @@ async def _height_overrides(records: list[dict]) -> None:
             linz_elevation.elevations(flat_points, spacing_m=2.0, surface="dem", allow_nodata=True),
             linz_elevation.elevations(flat_points, spacing_m=2.0, surface="dsm", allow_nodata=True),
         )
-    except (UpstreamError, httpx.HTTPError, ValueError, OSError):
+    except (UpstreamError, httpx.HTTPError, ValueError, OSError) as exc:
+        logger.warning("[LandView][LiDAR-buildings] height_sampling_failed sample_points=%s error=%s", len(flat_points), exc)
         return
 
+    logger.info("[LandView][LiDAR-buildings] sampled_points=%s dem_values=%s dsm_values=%s", len(flat_points), len(dem), len(dsm))
     cursor = 0
     for record, samples in zip(records, sample_sets):
         if not samples:
@@ -140,28 +146,53 @@ async def buildings_around(lat: float, lon: float, size_m: float = 1000.0) -> Bu
     half = size_m / 2
     south, west = offset_latlon(lat, lon, -half, -half)
     north, east = offset_latlon(lat, lon, half, half)
-    features, osm = await asyncio.gather(
-        linz.building_outlines(west, south, east, north),
-        _osm_levels(west, south, east, north),
+    logger.info(
+        "[LandView][buildings] pipeline_start center=(%.6f, %.6f) size_m=%.1f bbox_lonlat=(%.6f, %.6f, %.6f, %.6f)",
+        lat, lon, size_m, west, south, east, north,
     )
+    try:
+        features, osm = await asyncio.gather(
+            linz.building_outlines(west, south, east, north),
+            _osm_levels(west, south, east, north),
+        )
+    except Exception:
+        logger.exception("[LandView][buildings] upstream_fetch_failed center=(%.6f, %.6f) size_m=%.1f", lat, lon, size_m)
+        raise
 
     osm_points = osm or []
+    logger.info(
+        "[LandView][buildings] upstream_result linz_features=%s osm_query=%s osm_tagged_buildings=%s lidar_key_configured=%s",
+        len(features), "failed" if osm is None else "success", len(osm_points), bool(get_settings().linz_basemaps_key),
+    )
     tree = STRtree([point for point, _ in osm_points]) if osm_points else None
     settings = get_settings()
     # Keep extra DEM/DSM requests limited to the 100 m-radius scene.
     infer_lidar = bool(settings.linz_basemaps_key) and size_m <= 300.0
     records: list[dict] = []
+    geometry_errors = 0
+    non_polygon_parts = 0
+    small_parts_filtered = 0
+    osm_matches = 0
+    polygon_parts_seen = 0
 
     for feature in features:
         properties = feature.get("properties", {})
-        geometry = shape(feature["geometry"])
+        try:
+            geometry = shape(feature["geometry"])
+        except Exception as exc:
+            geometry_errors += 1
+            logger.warning("[LandView][buildings] invalid_geometry feature_id=%s error=%s", properties.get("building_id"), exc)
+            continue
         parts = list(geometry.geoms) if geometry.geom_type == "MultiPolygon" else [geometry]
         for part in parts:
+            polygon_parts_seen += 1
             if part.geom_type != "Polygon" or part.is_empty:
+                non_polygon_parts += 1
                 continue
             projected = project_geom(part)
             area = float(projected.area)
             if area < MIN_AREA_M2:
+                small_parts_filtered += 1
                 continue
 
             matched = None
@@ -169,6 +200,7 @@ async def buildings_around(lat: float, lon: float, size_m: float = 1000.0) -> Bu
                 hits = tree.query(projected.buffer(3), predicate="intersects")
                 if len(hits):
                     matched = osm_points[int(hits[0])][1]
+                    osm_matches += 1
 
             levels, explicit_height = matched if matched else (None, None)
             ring = [[round(x, 6), round(y, 6)] for x, y in part.exterior.coords][:-1]
@@ -185,8 +217,24 @@ async def buildings_around(lat: float, lon: float, size_m: float = 1000.0) -> Bu
                 }
             )
 
+    logger.info(
+        "[LandView][buildings] geometry_summary input_features=%s parts_seen=%s invalid_geometries=%s non_polygon_parts=%s below_min_area=%s accepted_footprints=%s osm_spatial_matches=%s",
+        len(features), polygon_parts_seen, geometry_errors, non_polygon_parts, small_parts_filtered, len(records), osm_matches,
+    )
+    if records:
+        sample = records[0]
+        xs = [point[0] for point in sample["ring"]]
+        ys = [point[1] for point in sample["ring"]]
+        logger.info(
+            "[LandView][buildings] sample_footprint id=%s area_m2=%.1f ring_points=%s lon_range=(%.6f, %.6f) lat_range=(%.6f, %.6f) first_point=%s",
+            sample["id"], sample["area"], len(sample["ring"]), min(xs), max(xs), min(ys), max(ys), sample["ring"][0] if sample["ring"] else None,
+        )
     if infer_lidar and records:
         await _height_overrides(records)
+    elif records and not settings.linz_basemaps_key:
+        logger.info("[LandView][LiDAR-buildings] skipped reason=LINZ_BASEMAPS_KEY_not_configured size_m=%.1f", size_m)
+    elif records and size_m > 300.0:
+        logger.info("[LandView][LiDAR-buildings] skipped reason=coverage_over_300m size_m=%.1f", size_m)
 
     result: list[Building] = []
     for record in records[:MAX_BUILDINGS]:
@@ -231,4 +279,11 @@ async def buildings_around(lat: float, lon: float, size_m: float = 1000.0) -> Bu
             )
         )
 
+    height_sources: dict[str, int] = {}
+    for building in result:
+        height_sources[building.height_source] = height_sources.get(building.height_source, 0) + 1
+    logger.info(
+        "[LandView][buildings] response_ready returned_buildings=%s height_sources=%s osm_available=%s",
+        len(result), height_sources, osm is not None,
+    )
     return BuildingCollection(buildings=result, osm_available=osm is not None)
