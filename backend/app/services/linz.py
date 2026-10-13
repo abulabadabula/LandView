@@ -3,6 +3,7 @@ import logging
 import re
 
 import httpx
+from pyproj import Transformer
 
 from app.config import get_settings
 from app.schemas import AddressResult, BoundaryPoint, Parcel
@@ -10,6 +11,7 @@ from app.services.errors import UpstreamError
 from app.services.geo import ring_area_m2, to_nztm
 
 logger = logging.getLogger(__name__)
+_TO_NZTM = Transformer.from_crs(4326, 2193, always_xy=True)
 
 _SKIP_INTENTS = {"Road", "Hydro", "Railway"}
 
@@ -148,35 +150,56 @@ async def building_outlines(w: float, s: float, e: float, n: float, limit: int =
         "srsName": "EPSG:4326",
         "count": limit,
     }
-    # Axis order in CQL BBOX differs between servers, so try lon/lat first, then lat/lon.
-    filters = (f"bbox(shape,{w:.6f},{s:.6f},{e:.6f},{n:.6f})", f"bbox(shape,{s:.6f},{w:.6f},{n:.6f},{e:.6f})")
+    # LDS WFS evaluates CQL spatial filters in the layer's native CRS. The NZ
+    # Building Outlines layer is stored in EPSG:2193 (NZTM2000 metres), even though
+    # srsName=EPSG:4326 below requests longitude/latitude in the response. Transform
+    # all four corners so the extent remains correct, then build an envelope in NZTM.
+    corners = [
+        _TO_NZTM.transform(w, s),
+        _TO_NZTM.transform(w, n),
+        _TO_NZTM.transform(e, s),
+        _TO_NZTM.transform(e, n),
+    ]
+    min_e = min(point[0] for point in corners)
+    max_e = max(point[0] for point in corners)
+    min_n = min(point[1] for point in corners)
+    max_n = max(point[1] for point in corners)
+
+    # EPSG:2193 axis order in LDS WFS 2.0 spatial filters is northing/easting.
+    # Keep an easting/northing retry for diagnostics/compatibility if the service
+    # returns no results using the documented order.
+    filters = (
+        ("n/e", f"bbox(shape,{min_n:.3f},{min_e:.3f},{max_n:.3f},{max_e:.3f})"),
+        ("e/n", f"bbox(shape,{min_e:.3f},{min_n:.3f},{max_e:.3f},{max_n:.3f})"),
+    )
     logger.info(
-        "[LandView][LINZ-buildings] request_start layer=%s bbox_lonlat=(%.6f, %.6f, %.6f, %.6f) limit=%s",
-        st.linz_building_layer, w, s, e, n, limit,
+        "[LandView][LINZ-buildings] request_start layer=%s bbox_lonlat=(%.6f, %.6f, %.6f, %.6f) bbox_nztm_e_n=(%.2f, %.2f, %.2f, %.2f) limit=%s",
+        st.linz_building_layer, w, s, e, n, min_e, min_n, max_e, max_n, limit,
     )
     last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=max(st.http_timeout, 40)) as client:
-        for attempt, cql in enumerate(filters, start=1):
+        for attempt, (axis_order, cql) in enumerate(filters, start=1):
             try:
                 r = await client.get(st.linz_wfs_url.format(key=key), params={**base, "cql_filter": cql})
                 r.raise_for_status()
                 payload = r.json()
                 feats = payload.get("features", [])
                 logger.info(
-                    "[LandView][LINZ-buildings] attempt=%s http_status=%s raw_features=%s",
-                    attempt, r.status_code, len(feats),
+                    "[LandView][LINZ-buildings] attempt=%s axis_order=%s http_status=%s raw_features=%s",
+                    attempt, axis_order, r.status_code, len(feats),
                 )
             except (httpx.HTTPError, ValueError) as ex:
                 last_error = ex
                 logger.warning(
-                    "[LandView][LINZ-buildings] attempt=%s request_failed status=%s error=%s",
-                    attempt, getattr(getattr(ex, "response", None), "status_code", None), ex,
+                    "[LandView][LINZ-buildings] attempt=%s axis_order=%s request_failed status=%s error=%s",
+                    attempt, axis_order, getattr(getattr(ex, "response", None), "status_code", None), ex,
                 )
                 continue
             feats = [{**f, "geometry": _normalize_geometry(f["geometry"])} for f in feats if f.get("geometry")]
             logger.info(
-                "[LandView][LINZ-buildings] attempt=%s features_with_geometry=%s geometry_types_sample=%s",
+                "[LandView][LINZ-buildings] attempt=%s axis_order=%s features_with_geometry=%s geometry_types_sample=%s",
                 attempt,
+                axis_order,
                 len(feats),
                 [f.get("geometry", {}).get("type") for f in feats[:5]],
             )
