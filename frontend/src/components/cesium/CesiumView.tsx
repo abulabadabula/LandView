@@ -274,7 +274,34 @@ export default function CesiumView() {
     const viewer = viewerRef.current;
     if (!viewer) return;
     viewer.entities.removeAll();
+
+    const inputBuildings = buildings?.buildings ?? [];
+    const validRingCount = inputBuildings.filter((building) =>
+      building.ring.length >= 3 && building.ring.every(([lon, lat]) =>
+        Number.isFinite(lon) && Number.isFinite(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90,
+      ),
+    ).length;
+    console.info("[LandView][Cesium-buildings] render_start", {
+      terrainReady: Boolean(terrain),
+      showBuildings,
+      payloadReceived: buildings !== null,
+      buildingCount: inputBuildings.length,
+      validRingCount,
+      invalidRingCount: inputBuildings.length - validRingCount,
+      terrainSizeM: terrain?.sizeM ?? null,
+      sampleBuilding: inputBuildings[0]
+        ? {
+            id: inputBuildings[0].id,
+            ringPointCount: inputBuildings[0].ring.length,
+            firstPoint: inputBuildings[0].ring[0],
+            heightM: inputBuildings[0].heightM,
+            heightSource: inputBuildings[0].heightSource,
+          }
+        : null,
+    });
+
     if (!terrain) {
+      console.warn("[LandView][Cesium-buildings] render_skipped reason=terrain_not_ready");
       viewer.scene.requestRender();
       return;
     }
@@ -298,31 +325,67 @@ export default function CesiumView() {
       }
     }
 
-    if (showBuildings && buildings?.buildings.length) {
+    let buildingEntitiesAdded = 0;
+    let buildingEntitiesFailed = 0;
+    let buildingRingsSkipped = 0;
+    if (!showBuildings) {
+      console.info("[LandView][Cesium-buildings] render_skipped reason=layer_disabled");
+    } else if (!buildings) {
+      console.warn("[LandView][Cesium-buildings] render_skipped reason=building_payload_null");
+    } else {
       for (const building of buildings.buildings) {
-        if (building.ring.length < 3) continue;
+        const validRing = building.ring.length >= 3 && building.ring.every(([lon, lat]) =>
+          Number.isFinite(lon) && Number.isFinite(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90,
+        );
+        if (!validRing) {
+          buildingRingsSkipped += 1;
+          console.warn("[LandView][Cesium-buildings] invalid_ring_skipped", {
+            buildingId: building.id,
+            ringPointCount: building.ring.length,
+            firstPoints: building.ring.slice(0, 3),
+          });
+          continue;
+        }
         const mappedHeight = building.heightSource === "osm_height" || building.heightSource === "osm_levels";
         const lidarHeight = building.heightSource === "lidar_estimated";
-        viewer.entities.add({
-          id: `building-${building.id ?? "unknown"}-${building.ring[0]?.[0]}-${building.ring[0]?.[1]}`,
-          name: building.use ?? (mappedHeight ? "Building (OSM height)" : lidarHeight ? "Building (LiDAR-estimated height)" : "Building (assumed height)"),
-          polygon: {
-            hierarchy: Cartesian3.fromDegreesArray(building.ring.flat()),
-            height: 0,
-            heightReference: HeightReference.RELATIVE_TO_GROUND,
-            extrudedHeight: Math.max(building.heightM, 1),
-            extrudedHeightReference: HeightReference.RELATIVE_TO_GROUND,
-            material: (mappedHeight
-              ? Color.fromCssColorString("#aebdca")
-              : lidarHeight
-                ? Color.fromCssColorString("#91b6a0")
-                : Color.fromCssColorString("#cbbda5")).withAlpha(0.98),
-            outline: true,
-            outlineColor: Color.fromCssColorString("#5d6b75").withAlpha(0.95),
-          },
-        });
+        try {
+          viewer.entities.add({
+            id: `building-${building.id ?? "unknown"}-${building.ring[0]?.[0]}-${building.ring[0]?.[1]}`,
+            name: building.use ?? (mappedHeight ? "Building (OSM height)" : lidarHeight ? "Building (LiDAR-estimated height)" : "Building (assumed height)"),
+            polygon: {
+              hierarchy: Cartesian3.fromDegreesArray(building.ring.flat()),
+              height: 0,
+              heightReference: HeightReference.RELATIVE_TO_GROUND,
+              extrudedHeight: Math.max(building.heightM, 1),
+              extrudedHeightReference: HeightReference.RELATIVE_TO_GROUND,
+              material: (mappedHeight
+                ? Color.fromCssColorString("#aebdca")
+                : lidarHeight
+                  ? Color.fromCssColorString("#91b6a0")
+                  : Color.fromCssColorString("#cbbda5")).withAlpha(0.98),
+              outline: true,
+              outlineColor: Color.fromCssColorString("#5d6b75").withAlpha(0.95),
+            },
+          });
+          buildingEntitiesAdded += 1;
+        } catch (error) {
+          buildingEntitiesFailed += 1;
+          console.error("[LandView][Cesium-buildings] entity_creation_failed", {
+            buildingId: building.id,
+            ringPointCount: building.ring.length,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
+    console.info("[LandView][Cesium-buildings] render_summary", {
+      received: inputBuildings.length,
+      entitiesAdded: buildingEntitiesAdded,
+      invalidRingsSkipped: buildingRingsSkipped,
+      entityCreationFailures: buildingEntitiesFailed,
+      totalSceneEntitiesAfterBuildings: viewer.entities.values.length,
+      showBuildings,
+    });
 
     // Highlight the selected parcel on the terrain surface.
     if (parcel?.boundary.length) {

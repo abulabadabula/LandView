@@ -1,4 +1,5 @@
 """LINZ Data Service: address search (WFS) and parcel lookup (Query API)."""
+import logging
 import re
 
 import httpx
@@ -7,6 +8,8 @@ from app.config import get_settings
 from app.schemas import AddressResult, BoundaryPoint, Parcel
 from app.services.errors import UpstreamError
 from app.services.geo import ring_area_m2, to_nztm
+
+logger = logging.getLogger(__name__)
 
 _SKIP_INTENTS = {"Road", "Hydro", "Railway"}
 
@@ -147,19 +150,47 @@ async def building_outlines(w: float, s: float, e: float, n: float, limit: int =
     }
     # Axis order in CQL BBOX differs between servers, so try lon/lat first, then lat/lon.
     filters = (f"bbox(shape,{w:.6f},{s:.6f},{e:.6f},{n:.6f})", f"bbox(shape,{s:.6f},{w:.6f},{n:.6f},{e:.6f})")
+    logger.info(
+        "[LandView][LINZ-buildings] request_start layer=%s bbox_lonlat=(%.6f, %.6f, %.6f, %.6f) limit=%s",
+        st.linz_building_layer, w, s, e, n, limit,
+    )
     last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=max(st.http_timeout, 40)) as client:
-        for cql in filters:
+        for attempt, cql in enumerate(filters, start=1):
             try:
                 r = await client.get(st.linz_wfs_url.format(key=key), params={**base, "cql_filter": cql})
                 r.raise_for_status()
-                feats = r.json().get("features", [])
+                payload = r.json()
+                feats = payload.get("features", [])
+                logger.info(
+                    "[LandView][LINZ-buildings] attempt=%s http_status=%s raw_features=%s",
+                    attempt, r.status_code, len(feats),
+                )
             except (httpx.HTTPError, ValueError) as ex:
                 last_error = ex
+                logger.warning(
+                    "[LandView][LINZ-buildings] attempt=%s request_failed status=%s error=%s",
+                    attempt, getattr(getattr(ex, "response", None), "status_code", None), ex,
+                )
                 continue
             feats = [{**f, "geometry": _normalize_geometry(f["geometry"])} for f in feats if f.get("geometry")]
+            logger.info(
+                "[LandView][LINZ-buildings] attempt=%s features_with_geometry=%s geometry_types_sample=%s",
+                attempt,
+                len(feats),
+                [f.get("geometry", {}).get("type") for f in feats[:5]],
+            )
             if feats:
+                logger.info("[LandView][LINZ-buildings] request_success returned_features=%s", len(feats))
                 return feats
     if last_error:
+        logger.error(
+            "[LandView][LINZ-buildings] request_failed_all_attempts bbox_lonlat=(%.6f, %.6f, %.6f, %.6f) last_error=%s",
+            w, s, e, n, last_error,
+        )
         raise UpstreamError(f"LINZ building outlines failed: {last_error}") from last_error
+    logger.warning(
+        "[LandView][LINZ-buildings] request_completed_no_features bbox_lonlat=(%.6f, %.6f, %.6f, %.6f)",
+        w, s, e, n,
+    )
     return []
