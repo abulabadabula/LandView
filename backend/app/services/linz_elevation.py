@@ -9,6 +9,7 @@ from PIL import Image
 
 from app.config import get_settings
 from app.services.errors import UpstreamError
+from landview_core.cache import LRUCache
 
 _TILE = 256
 _MIN_Z, _MAX_Z = 10, 18
@@ -16,7 +17,8 @@ _MAX_RETRIES = 3
 _CONCURRENCY = 8
 
 # (surface, z, x, y) -> float32 tile; None means there is no source tile.
-_tile_cache: dict[tuple[str, int, int, int], np.ndarray | None] = {}
+# Bounded: a decoded tile is ~256 KB, so 512 tiles caps this at ~128 MB.
+_tile_cache: LRUCache[tuple[str, int, int, int], np.ndarray | None] = LRUCache(512)
 _sem = asyncio.Semaphore(_CONCURRENCY)
 
 

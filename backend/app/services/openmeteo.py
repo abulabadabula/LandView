@@ -6,12 +6,14 @@ import httpx
 
 from app.config import get_settings
 from app.services.errors import UpstreamError
+from landview_core.cache import LRUCache
 
 # Open-Meteo's elevation endpoint accepts at most 100 coordinate pairs per request.
 # More importantly, sending many batches concurrently can trigger HTTP 429 responses.
 # Keep upstream requests serialized, retry 429 responses, and cache values in-process.
-_elev_cache: dict[tuple[float, float], float] = {}
-_climate_cache: dict[tuple[float, float, int], dict] = {}
+# Bounded LRUs (entries are small). Reads never rely on the cache after writing: see elevations().
+_elev_cache: LRUCache[tuple[float, float], float] = LRUCache(50_000)
+_climate_cache: LRUCache[tuple[float, float, int], dict] = LRUCache(256)
 _UPSTREAM_LOCK = asyncio.Lock()
 _BATCH = 100
 _MAX_RETRIES = 4
@@ -65,7 +67,8 @@ async def _elevation_batch(client: httpx.AsyncClient, pts: list[tuple[float, flo
 async def elevations(points: list[tuple[float, float]]) -> list[float]:
     """Elevation (m) for (lat, lon) points; batched, serialized and cached."""
     keys = [(round(la, 5), round(lo, 5)) for la, lo in points]
-    missing = list(dict.fromkeys(k for k in keys if k not in _elev_cache))
+    found: dict[tuple[float, float], float] = {k: v for k in keys if (v := _elev_cache.get(k)) is not None}
+    missing = list(dict.fromkeys(k for k in keys if k not in found))
     if missing:
         batches = [missing[i : i + _BATCH] for i in range(0, len(missing), _BATCH)]
         try:
@@ -75,10 +78,12 @@ async def elevations(points: list[tuple[float, float]]) -> list[float]:
                     # hundreds/thousands of points and otherwise produces a burst of requests.
                     for batch in batches:
                         result = await _elevation_batch(client, batch)
-                        _elev_cache.update(zip(batch, result))
+                        fetched = dict(zip(batch, result, strict=True))
+                        found.update(fetched)
+                        _elev_cache.update(fetched.items())
         except (httpx.HTTPError, KeyError, ValueError) as e:
             raise UpstreamError(f"Open-Meteo elevation failed: {e}") from e
-    return [_elev_cache[k] for k in keys]
+    return [found[k] for k in keys]
 
 
 async def climate_summary(lat: float, lon: float, years: int = 5) -> dict:
