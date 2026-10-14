@@ -51,7 +51,7 @@ def building_height_provenance(height_source: str) -> Provenance:
             return Provenance(
                 status=Status.ASSUMED,
                 source="OpenStreetMap height tag",
-                note="Community-mapped, not a surveyed value; confirm before using for planning constraints",
+                note="community-mapped, not a surveyed value; confirm before using for planning constraints",
             )
         case "osm_levels":
             return Provenance(
