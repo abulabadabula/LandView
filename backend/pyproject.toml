@@ -13,5 +13,26 @@ dependencies = [
   "numpy>=1.26",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21", "hypothesis>=6", "ruff>=0.6", "pyright>=1.1.380"]
+
 [tool.vercel]
 entrypoint = "app.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# Pre-existing debt in app/services: long log lines and non-strict zip(). Tighten later.
+ignore = ["E501", "B905"]
+
+[tool.pyright]
+include = ["landview_core"]
+pythonVersion = "3.12"

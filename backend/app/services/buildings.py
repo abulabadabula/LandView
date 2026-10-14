@@ -11,8 +11,7 @@ from shapely.strtree import STRtree
 
 from app.config import get_settings
 from app.schemas import Building, BuildingCollection
-from app.services import linz
-from app.services import linz_elevation
+from app.services import linz, linz_elevation
 from app.services.errors import UpstreamError
 from app.services.geo import offset_latlon, project_geom, to_nztm
 
