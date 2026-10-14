@@ -40,17 +40,24 @@ class Provenanced[T](BaseModel):
 
 
 def building_height_provenance(height_source: str) -> Provenance:
-    """Map the building height source label used by the API onto a provenance record.
+    """Map API height labels to provenance.
 
-    OSM tags are community-mapped, not surveyed; heights from LiDAR are DSM minus DEM at
-    roof samples (roof top, not eaves). Neither is authoritative, so the note says so.
+    OSM tags are community-mapped, not surveyed; LiDAR DSM minus DEM estimates
+    roof-top height, not eaves. These values must not be treated as verified
+    planning inputs without confirmation.
     """
     match height_source:
         case "osm_height":
-            return Provenance(status=Status.MEASURED, source="OpenStreetMap height tag", note="Community-mapped")
+            return Provenance(
+                status=Status.ASSUMED,
+                source="OpenStreetMap height tag",
+                note="Community-mapped, not a surveyed value; confirm before using for planning constraints",
+            )
         case "osm_levels":
             return Provenance(
-                status=Status.DERIVED, source="OpenStreetMap levels tag", note="Storeys x nominal storey height"
+                status=Status.DERIVED,
+                source="OpenStreetMap levels tag",
+                note="Storeys x nominal storey height; community-mapped input, not a surveyed height",
             )
         case "lidar_estimated":
             return Provenance(

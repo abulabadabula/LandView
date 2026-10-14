@@ -46,6 +46,8 @@ jobs:
         run: ruff check .
       - name: Type check (landview_core)
         run: pyright
+      - name: Rule pack validation
+        run: python -m landview_core.rule_cli lint ../rules/auckland/draft/single-dwelling.yaml
       - name: Unit tests
         run: pytest -q
       - name: Import FastAPI application

@@ -1,0 +1,20 @@
+# Intentionally unconfigured: do not treat this template as planning advice.
+# Select a zone and verify every rule against the legal plan text before use.
+schema_version: "1.0"
+pack_id: auckland-unconfigured-single-dwelling
+council: Auckland Council
+plan_name: Auckland Unitary Plan
+plan_version: null
+legal_status: DRAFT
+zone: UNCONFIGURED
+dwelling_typology: single_dwelling
+pack_version: 0.1.0
+effective_from: null
+reviewed_by: null
+reviewed_at: null
+source_url: null
+disclaimer: >-
+  Draft template only. No zone-specific or operative planning standards have been
+  configured or planner-reviewed. This pack must not be used to generate or certify
+  a development proposal.
+rules: []
