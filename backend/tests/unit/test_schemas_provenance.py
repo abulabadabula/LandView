@@ -16,7 +16,10 @@ def test_building_height_provenance_serialised_camel_case():
 
 def test_assumed_height_needs_confirmation():
     assert _building("assumed").height_provenance.needs_confirmation
-    assert _building("osm_height").height_provenance.status is Status.MEASURED
+    osm_height = _building("osm_height").height_provenance
+    assert osm_height.status is Status.ASSUMED
+    assert osm_height.needs_confirmation
+    assert "community-mapped" in osm_height.note
 
 
 def test_wind_is_always_assumed():
