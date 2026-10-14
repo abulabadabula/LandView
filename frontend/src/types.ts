@@ -1,5 +1,14 @@
 import type { Geometry } from "geojson";
 
+export type ProvenanceStatus = "MEASURED" | "DERIVED" | "ASSUMED" | "USER_CONFIRMED";
+export interface Provenance {
+  status: ProvenanceStatus;
+  source: string;
+  capturedAt?: string | null;
+  version?: string | null;
+  note?: string | null;
+}
+
 export interface AddressResult { id: number; fullAddress: string; lat: number; lon: number }
 
 export interface BoundaryPoint { index: number; lon: number; lat: number; nztmE: number; nztmN: number }
@@ -15,8 +24,8 @@ export interface Parcel {
   boundary: BoundaryPoint[];
 }
 
-export interface Topography { elevationM: number; slopeDeg: number; aspectDeg: number | null }
-export interface WindInfo { zone: string; maxGustMs: number; basis: string; disclaimer: string }
+export interface Topography { elevationM: number; slopeDeg: number; aspectDeg: number | null; provenance?: Provenance | null }
+export interface WindInfo { zone: string; maxGustMs: number; basis: string; disclaimer: string; provenance?: Provenance }
 export interface Climate { meanTempC: number; annualRainMm: number; years: number }
 export interface Environment { topography: Topography; wind: WindInfo; climate: Climate }
 
@@ -40,6 +49,7 @@ export interface Building {
   heightM: number;
   heightSource: "osm_height" | "osm_levels" | "lidar_estimated" | "assumed" | string;
   heightConfidence: "high" | "medium" | "low" | string;
+  heightProvenance?: Provenance;
   use: string | null;
   /** [lon, lat] exterior ring, not closed */
   ring: [number, number][];

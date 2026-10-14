@@ -1,5 +1,6 @@
 import { useAppSelector } from "@/store";
 import { compass } from "@/lib/geo";
+import { ProvenanceNote } from "./ProvenanceNote";
 
 const fmt = (n: number, d = 0) => n.toLocaleString("en-NZ", { maximumFractionDigits: d, minimumFractionDigits: d });
 
@@ -76,6 +77,7 @@ export default function LeftPanel() {
             <Row label="Elevation" value={`${fmt(env.topography.elevationM, 1)} m`} />
             <Row label="Slope" value={`${fmt(env.topography.slopeDeg, 1)}°`} />
             <Row label="Aspect" value={compass(env.topography.aspectDeg)} />
+            <ProvenanceNote provenance={env.topography.provenance} />
             {terrain && <Row label="Surrounding range" value={`${fmt(terrain.minElevation)}–${fmt(terrain.maxElevation)} m`} />}
           </Section>
           <Section title="Environment">
@@ -83,6 +85,7 @@ export default function LeftPanel() {
             <Row label="Max gust (5 yr)" value={`${fmt(env.wind.maxGustMs, 1)} m/s`} />
             <Row label="Mean temperature" value={`${fmt(env.climate.meanTempC, 1)} °C`} />
             <Row label="Annual rainfall" value={`${fmt(env.climate.annualRainMm)} mm`} />
+            <ProvenanceNote provenance={env.wind.provenance} />
             <p className="mt-2 text-xs text-muted-foreground">{env.wind.disclaimer}</p>
           </Section>
         </>

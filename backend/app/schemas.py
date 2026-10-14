@@ -1,7 +1,9 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 from pydantic.alias_generators import to_camel
+
+from landview_core.provenance import Provenance, Status, building_height_provenance
 
 
 class CamelModel(BaseModel):
@@ -40,6 +42,7 @@ class Topography(CamelModel):
     elevation_m: float
     slope_deg: float
     aspect_deg: float | None = None
+    provenance: Provenance | None = None
 
 
 class WindInfo(CamelModel):
@@ -47,6 +50,12 @@ class WindInfo(CamelModel):
     max_gust_ms: float
     basis: str
     disclaimer: str
+
+    @computed_field
+    @property
+    def provenance(self) -> Provenance:
+        # A gust-bucket heuristic is not an NZS 3604 wind zone, so it always needs confirmation.
+        return Provenance(status=Status.ASSUMED, source=self.basis, note=self.disclaimer)
 
 
 class Climate(CamelModel):
@@ -82,6 +91,11 @@ class Building(CamelModel):
     height_confidence: str = "low"
     use: str | None = None
     ring: list[list[float]]  # [lon, lat] exterior ring, not closed
+
+    @computed_field
+    @property
+    def height_provenance(self) -> Provenance:
+        return building_height_provenance(self.height_source)
 
 
 class BuildingCollection(CamelModel):

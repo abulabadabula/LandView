@@ -4,6 +4,7 @@ from app.config import get_settings
 from app.schemas import Climate, Environment, TerrainGrid, Topography, WindInfo
 from app.services import elevation, openmeteo
 from app.services.geo import offset_latlon
+from landview_core.provenance import Provenance, Status
 
 WIND_DISCLAIMER = (
     "Indicative only, estimated from 5 years of ERA5 reanalysis gusts. It is not an NZS 3604 "
@@ -20,13 +21,22 @@ def indicative_wind_zone(max_gust_ms: float) -> str:
 async def topography_at(lat: float, lon: float, spacing_m: float = 100.0) -> Topography:
     """Slope/aspect from a 3x3 elevation grid (Horn's method). Rows run south->north."""
     pts = [offset_latlon(lat, lon, dx * spacing_m, dy * spacing_m) for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
-    z = await elevation.elevations(pts, spacing_m)
+    z, source = await elevation.elevations_with_source(pts, spacing_m)
     e = [z[0:3], z[3:6], z[6:9]]
     dzdx = ((e[0][2] + 2 * e[1][2] + e[2][2]) - (e[0][0] + 2 * e[1][0] + e[2][0])) / (8 * spacing_m)
     dzdy = ((e[2][0] + 2 * e[2][1] + e[2][2]) - (e[0][0] + 2 * e[0][1] + e[0][2])) / (8 * spacing_m)
     slope = math.degrees(math.atan(math.hypot(dzdx, dzdy)))
     aspect = None if slope < 1 else (math.degrees(math.atan2(-dzdx, -dzdy)) + 360) % 360  # downslope direction
-    return Topography(elevation_m=e[1][1], slope_deg=round(slope, 1), aspect_deg=None if aspect is None else round(aspect))
+    return Topography(
+        elevation_m=e[1][1],
+        slope_deg=round(slope, 1),
+        aspect_deg=None if aspect is None else round(aspect),
+        provenance=Provenance(
+            status=Status.DERIVED,
+            source=source,
+            note=f"Horn slope from a 3x3 grid at {spacing_m:.0f} m spacing; coarse, site-scale analysis needs LiDAR",
+        ),
+    )
 
 async def environment_at(lat: float, lon: float) -> Environment:
     import asyncio
