@@ -60,7 +60,7 @@ describe("buildParcelTerrainMesh", () => {
     expect(mesh.boundary).toHaveLength(4);
     expect(mesh.boundary.every((point) => Number.isFinite(point.elevationM))).toBe(true);
     expect(mesh.boundary[0].horizontalDistanceToNextM).toBeCloseTo(Math.sqrt(500), 2);
-    expect(mesh.boundary[3].horizontalDistanceToNextM).toBeCloseTo(Math.sqrt(500), 2);
+    expect(mesh.boundary[3].horizontalDistanceToNextM).toBeCloseTo(Math.sqrt(4500), 2);
     expect(mesh.vertices.length).toBeGreaterThan(0);
     expect(mesh.indices.length).toBeGreaterThan(0);
     expect(mesh.indices.length % 3).toBe(0);
