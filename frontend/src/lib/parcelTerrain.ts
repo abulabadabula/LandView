@@ -62,18 +62,18 @@ export function buildParcelTerrainMesh(
     return { vertices: [], indices: [], boundary, minElevationM: 0, maxElevationM: 0, gridSpacingM };
   }
 
-  const rawVertices: ParcelTerrainVertex[] = new Array(n * n);
+  const rawVertices: ParcelTerrainVertex[] = [];
   for (let row = 0; row < n; row += 1) {
     const north = -half + row * gridSpacingM;
     const lat = terrain.centerLat + north / 111_320;
     for (let col = 0; col < n; col += 1) {
       const east = -half + col * gridSpacingM;
       const lon = terrain.centerLon + east / (111_320 * Math.cos((terrain.centerLat * Math.PI) / 180));
-      rawVertices[row * n + col] = {
+      rawVertices.push({
         lon,
         lat,
         elevationM: terrain.elevations[row * n + col],
-      };
+      });
     }
   }
 
