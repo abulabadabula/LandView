@@ -269,8 +269,6 @@ function buildParametricHouse(
   const garageDepth = garageDimensions.depth;
   const garageFrontZ = mainDepth / 2;
   const garageCenterZ = garageDepth > 0 ? garageFrontZ - garageDepth / 2 : 0;
-  const rearExtent = Math.max(mainDepth / 2, garageCenterZ + garageDepth / 2);
-  const frontExtent = Math.max(mainDepth / 2, garageCenterZ - garageDepth / 2);
   const terrainAt = groundYAt ?? ((_east: number, north: number) => -slope * north);
   const minX = -mainWidth / 2 - (params.showGarage && params.garage !== "No garage" ? garageDimensions.width : 0);
   const maxX = mainWidth / 2;
