@@ -6,7 +6,6 @@ from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 from app.schemas_house import (
-    HouseDesignCandidate,
     HouseDesignConstraintCheck,
     HouseDesignValidationRequest,
     HouseDesignValidationResult,
