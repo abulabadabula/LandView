@@ -58,6 +58,7 @@ npm run dev                            # http://localhost:5173
 |---|---|
 | `GET /api/address/search?q=` | Address matches from LINZ |
 | `GET /api/lot?lat=&lon=` | Parcel geometry, legal description and boundary points |
+| `POST /api/parcel/setback` | Inward setback line, NZTM2000 control points and WGS84 display coordinates |
 | `GET /api/environment?lat=&lon=` | Elevation, slope, aspect, indicative wind zone and climate |
 | `GET /api/terrain?lat=&lon=&size_m=&n=` | Elevation grid used by the 3D view |
 | `GET /api/buildings?lat=&lon=&size_m=` | LINZ building footprints enriched with OSM height/levels where available |
@@ -75,7 +76,7 @@ Cesium workers and assets are served from `/cesium` (see `frontend/vite.config.t
 
 Parcel 3D uses the selected parcel's LINZ boundary and a local elevation grid to construct a terrain triangle mesh clipped to the supplied parcel polygon. The mesh is clipped by intersecting terrain triangles with an ear-clipped triangulation of the parcel outline, so the footprint edge follows the legal boundary rather than whole-cell centres. The view does not render surrounding buildings, roads, waterways or map imagery. Drag with the left mouse button to rotate, right-drag to tilt, and use the wheel to zoom. Boundary endpoint elevations are bilinearly interpolated from the downloaded grid. Each boundary point and the map labels include the horizontal plan distance to the next point, calculated from the supplied NZTM easting/northing coordinates. The JSON export includes the parcel metadata and area, endpoint coordinates/elevations, horizontal edge distances, terrain source and sample spacing, mesh vertices (longitude, latitude and elevation in metres), and triangle indices.
 
-The mesh is intended for visualisation and early-stage site context, not survey, setting-out, earthworks quantities or engineering design. The visible perimeter follows the parcel outline, but elevation resolution and datum still depend on the source grid. When LINZ LiDAR elevation tiles are not configured or available, the backend falls back to a coarser elevation source/grid; check the exported source and spacing before using the data.
+The 1 m setback is a geometric inward buffer from the supplied parcel polygon in NZTM2000; it does not infer jurisdiction-specific planning rules or prove that 1 m is the legally required setback. Confirm applicable council planning controls and survey data before relying on it for design. The mesh is intended for visualisation and early-stage site context, not survey, setting-out, earthworks quantities or engineering design. The visible perimeter follows the parcel outline, but elevation resolution and datum still depend on the source grid. When LINZ LiDAR elevation tiles are not configured or available, the backend falls back to a coarser elevation source/grid; check the exported source and spacing before using the data.
 
 ## Data limitations and attribution
 
