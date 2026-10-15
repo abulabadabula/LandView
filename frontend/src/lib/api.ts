@@ -4,10 +4,25 @@ import type {
   ContextCollection,
   Environment,
   Parcel,
+  ParcelSetbackResult,
   TerrainGrid,
 } from "@/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail ?? detail; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return res.json() as Promise<T>;
+}
 
 async function get<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
   const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
@@ -23,6 +38,15 @@ async function get<T>(path: string, params: Record<string, string | number> = {}
 export const api = {
   searchAddresses: (q: string) => get<AddressResult[]>("/address/search", { q }),
   getLot: (lat: number, lon: number) => get<Parcel | null>("/lot", { lat, lon }),
+  getParcelSetback: (boundary: Parcel["boundary"], distanceM = 1) =>
+    post<ParcelSetbackResult>("/parcel/setback", {
+      distanceM,
+      boundary: boundary.map((point) => ({
+        index: point.index,
+        nztmE: point.nztmE,
+        nztmN: point.nztmN,
+      })),
+    }),
   getEnvironment: (lat: number, lon: number) => get<Environment>("/environment", { lat, lon }),
   getTerrain: (lat: number, lon: number, sizeM = 1000, n = 33) =>
     get<TerrainGrid>("/terrain", { lat, lon, size_m: sizeM, n }),
