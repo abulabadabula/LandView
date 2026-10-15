@@ -78,6 +78,12 @@ Parcel 3D uses the selected parcel's LINZ boundary and a local elevation grid to
 
 The 1 m setback is a geometric inward buffer from the supplied parcel polygon in NZTM2000; it does not infer jurisdiction-specific planning rules or prove that 1 m is the legally required setback. Confirm applicable council planning controls and survey data before relying on it for design. The mesh is intended for visualisation and early-stage site context, not survey, setting-out, earthworks quantities or engineering design. The visible perimeter follows the parcel outline, but elevation resolution and datum still depend on the source grid. When LINZ LiDAR elevation tiles are not configured or available, the backend falls back to a coarser elevation source/grid; check the exported source and spacing before using the data.
 
+## AI House Generator contracts
+
+The AI House Generator design brief is defined in [the JSON Schema](docs/schemas/HouseDesignSpec.schema.json) with a [design-input example](docs/examples/house-design-input.example.json). The example requests a two-storey contemporary house, four bedrooms, 200 m² target GFA, gable roof, double garage and terrain adaptation; it is input data only, not a generated house model. See [the design and validation contract](docs/house-design-generator.md) for deterministic parametric geometry rules, coordinate conventions, validation states and API contracts.
+
+Current endpoints: GET /api/house-design/spec/schema, POST /api/house-design/spec/validate and POST /api/house-design/constraints/validate. The constraint endpoint validates a supplied candidate; AI provider integration and parametric house mesh generation are not yet implemented.
+
 ## Data limitations and attribution
 
 - **Terrain fallback is for visualisation only.** With `LINZ_BASEMAPS_KEY`, the detailed local scene samples LINZ LiDAR-derived DEM tiles. Without it, the backend limits grid density and uses Open-Meteo elevation samples, which rely on a coarse global DEM and do not provide lot-scale LiDAR detail. For high-detail terrain, configure a terrain provider backed by suitable LINZ LiDAR DEM coverage or use Cesium World Terrain where its resolution/coverage meets the purpose. Do not use the fallback grid for surveying, earthworks quantities or engineering design.

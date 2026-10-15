@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:landview:HouseDesignSpec:1.0.0",
+  "title": "LandView HouseDesignSpec",
+  "description": "Design intent supplied to the AI House Generator. This is not a geometry model.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "description": "Schema contract version."
+    },
+    "storeys": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "Requested number of storeys."
+    },
+    "bedrooms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Requested bedroom count."
+    },
+    "grossFloorAreaTargetM2": {
+      "type": "number",
+      "exclusiveMinimum": 20,
+      "maximum": 2000,
+      "description": "Target gross floor area. It is a design goal until the accounting basis is agreed."
+    },
+    "grossFloorAreaBasis": {
+      "type": ["string", "null"],
+      "enum": ["includesGarage", "excludesGarage", null],
+      "description": "Optional and must be agreed before assessing the GFA target; garage accounting can differ by definition."
+    },
+    "style": {
+      "type": "string",
+      "enum": ["Contemporary", "Modern", "Traditional", "Minimalist", "Coastal", "Scandinavian"]
+    },
+    "roof": {
+      "type": "string",
+      "enum": ["Gable roof", "Hip roof", "Flat roof", "Mono-pitch roof", "Mixed roof"]
+    },
+    "garage": {
+      "type": "string",
+      "enum": ["No garage", "Single garage", "Double garage", "Carport"]
+    },
+    "terrainAdaptation": {
+      "type": "string",
+      "enum": ["Adapt to terrain", "Level pad", "Stepped floor plates"]
+    }
+  },
+  "required": [
+    "storeys",
+    "bedrooms",
+    "grossFloorAreaTargetM2",
+    "style",
+    "roof",
+    "garage",
+    "terrainAdaptation"
+  ]
+}

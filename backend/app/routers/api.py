@@ -10,10 +10,17 @@ from app.schemas import (
     ParcelSetbackResult,
     TerrainGrid,
 )
+from app.schemas_house import (
+    HouseDesignSpec,
+    HouseDesignSpecValidationResult,
+    HouseDesignValidationRequest,
+    HouseDesignValidationResult,
+)
 from app.services import buildings as building_service
 from app.services import context as context_service
 from app.services import environment, linz
 from app.services import setback as setback_service
+from app.services.house_design_validation import validate_house_design
 
 router = APIRouter(prefix="/api")
 
@@ -33,6 +40,27 @@ async def lot(lat: float = Query(ge=-48, le=-33), lon: float = Query(ge=165, le=
 async def parcel_setback(request: ParcelSetbackRequest):
     """Return an inward parcel buffer and its WGS84/NZTM control coordinates."""
     return setback_service.create_parcel_setback(request)
+
+
+@router.get("/house-design/spec/schema")
+async def house_design_spec_schema():
+    """Return the machine-readable HouseDesignSpec JSON Schema."""
+    schema = HouseDesignSpec.model_json_schema(by_alias=True)
+    schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    schema["$id"] = "urn:landview:HouseDesignSpec:1.0.0"
+    return schema
+
+
+@router.post("/house-design/spec/validate", response_model=HouseDesignSpecValidationResult)
+async def validate_house_design_spec(spec: HouseDesignSpec):
+    """Validate and normalise design intent. This does not generate geometry."""
+    return HouseDesignSpecValidationResult(valid=True, spec=spec)
+
+
+@router.post("/house-design/constraints/validate", response_model=HouseDesignValidationResult)
+async def house_design_constraints_validate(request: HouseDesignValidationRequest):
+    """Check a supplied candidate against supplied site geometry and rule data."""
+    return validate_house_design(request)
 
 
 @router.get("/environment", response_model=Environment)

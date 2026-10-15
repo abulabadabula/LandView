@@ -1,0 +1,9 @@
+{
+  "storeys": 2,
+  "bedrooms": 4,
+  "grossFloorAreaTargetM2": 200,
+  "style": "Contemporary",
+  "roof": "Gable roof",
+  "garage": "Double garage",
+  "terrainAdaptation": "Adapt to terrain"
+}
