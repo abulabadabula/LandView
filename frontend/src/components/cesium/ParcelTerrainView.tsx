@@ -11,6 +11,7 @@ import {
   EllipsoidTerrainProvider,
   Geometry,
   GeometryAttribute,
+  GeometryAttributes,
   GeometryInstance,
   HeadingPitchRange,
   LabelStyle,
@@ -140,19 +141,20 @@ export default function ParcelTerrainView() {
       normalValues[i + 2] = normalAccumulator[i + 2] / length;
     }
 
+    const attributes = new GeometryAttributes();
+    attributes.position = new GeometryAttribute({
+      componentDatatype: ComponentDatatype.DOUBLE,
+      componentsPerAttribute: 3,
+      values: positionValues,
+    });
+    attributes.normal = new GeometryAttribute({
+      componentDatatype: ComponentDatatype.FLOAT,
+      componentsPerAttribute: 3,
+      values: normalValues,
+    });
+
     const geometry = new Geometry({
-      attributes: {
-        position: new GeometryAttribute({
-          componentDatatype: ComponentDatatype.DOUBLE,
-          componentsPerAttribute: 3,
-          values: positionValues,
-        }),
-        normal: new GeometryAttribute({
-          componentDatatype: ComponentDatatype.FLOAT,
-          componentsPerAttribute: 3,
-          values: normalValues,
-        }),
-      },
+      attributes,
       indices: new Uint32Array(mesh.indices),
       primitiveType: PrimitiveType.TRIANGLES,
       boundingSphere: BoundingSphere.fromVertices(positionValues),
