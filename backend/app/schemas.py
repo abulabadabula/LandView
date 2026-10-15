@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 from pydantic.alias_generators import to_camel
 
 from landview_core.provenance import Provenance, Status, building_height_provenance
@@ -36,6 +36,38 @@ class Parcel(CamelModel):
     area_m2: float
     geometry: dict[str, Any]
     boundary: list[BoundaryPoint]
+
+
+class SetbackBoundaryPoint(CamelModel):
+    """A legal boundary control point expressed in NZTM2000 metres."""
+
+    index: int
+    nztm_e: float
+    nztm_n: float
+
+
+class ParcelSetbackRequest(CamelModel):
+    boundary: list[SetbackBoundaryPoint] = Field(min_length=3, max_length=5000)
+    distance_m: float = Field(default=1.0, gt=0, le=100)
+
+
+class ParcelSetbackPoint(CamelModel):
+    index: int
+    lon: float
+    lat: float
+    nztm_e: float
+    nztm_n: float
+
+
+class ParcelSetbackPolygon(CamelModel):
+    points: list[ParcelSetbackPoint]
+    area_m2: float
+
+
+class ParcelSetbackResult(CamelModel):
+    distance_m: float
+    polygons: list[ParcelSetbackPolygon]
+    warning: str | None = None
 
 
 class Topography(CamelModel):
