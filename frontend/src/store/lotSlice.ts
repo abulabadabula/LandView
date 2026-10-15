@@ -7,6 +7,7 @@ import type {
   ContextCollection,
   Environment,
   Parcel,
+  ParcelSetbackResult,
   TerrainGrid,
 } from "@/types";
 
@@ -19,6 +20,9 @@ interface LotState {
   terrain: TerrainGrid | null;
   parcelTerrain: TerrainGrid | null;
   parcelTerrainLoading: boolean;
+  parcelSetback: ParcelSetbackResult | null;
+  parcelSetbackLoading: boolean;
+  parcelSetbackError: string | null;
   buildings: BuildingCollection | null;
   context: ContextCollection | null;
   status: "idle" | "loading" | "ready" | "error";
@@ -35,6 +39,9 @@ const initialState: LotState = {
   terrain: null,
   parcelTerrain: null,
   parcelTerrainLoading: false,
+  parcelSetback: null,
+  parcelSetbackLoading: false,
+  parcelSetbackError: null,
   buildings: null,
   context: null,
   status: "idle",
@@ -88,6 +95,12 @@ export const loadParcelTerrain = createAsyncThunk(
   },
 );
 
+export const loadParcelSetback = createAsyncThunk(
+  "lot/loadParcelSetback",
+  async ({ parcel, distanceM = 1 }: { parcel: Parcel; distanceM?: number }) =>
+    api.getParcelSetback(parcel.boundary, distanceM),
+);
+
 const lotSlice = createSlice({
   name: "lot",
   initialState,
@@ -111,6 +124,9 @@ const lotSlice = createSlice({
       s.selected = a.meta.arg;
       s.parcelTerrain = null;
       s.parcelTerrainLoading = false;
+      s.parcelSetback = null;
+      s.parcelSetbackLoading = false;
+      s.parcelSetbackError = null;
       s.results = [];
     });
     b.addCase(loadLot.fulfilled, (s, a) => {
@@ -153,6 +169,19 @@ const lotSlice = createSlice({
     b.addCase(loadParcelTerrain.rejected, (s, a) => {
       s.parcelTerrainLoading = false;
       s.error = a.error.message ?? "Failed to load parcel terrain";
+    });
+    b.addCase(loadParcelSetback.pending, (s) => {
+      s.parcelSetbackLoading = true;
+      s.parcelSetbackError = null;
+      s.parcelSetback = null;
+    });
+    b.addCase(loadParcelSetback.fulfilled, (s, a) => {
+      s.parcelSetbackLoading = false;
+      s.parcelSetback = a.payload;
+    });
+    b.addCase(loadParcelSetback.rejected, (s, a) => {
+      s.parcelSetbackLoading = false;
+      s.parcelSetbackError = a.error.message ?? "Failed to generate parcel setback";
     });
   },
 });
