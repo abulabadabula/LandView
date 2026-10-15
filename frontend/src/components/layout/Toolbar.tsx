@@ -1,7 +1,7 @@
 import { Box, Building2, Crosshair, Map as MapIcon, Mountain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppDispatch, useAppSelector } from "@/store";
-import { loadParcelTerrain, loadSurroundings } from "@/store/lotSlice";
+import { loadParcelSetback, loadParcelTerrain, loadSurroundings } from "@/store/lotSlice";
 import { fitToLot, setCoverageSizeM, setViewMode } from "@/store/uiSlice";
 
 export default function Toolbar() {
@@ -22,6 +22,7 @@ export default function Toolbar() {
     if (!selected || !parcel) return;
     dispatch(setViewMode("parcel3d"));
     void dispatch(loadParcelTerrain({ address: selected, parcel }));
+    void dispatch(loadParcelSetback({ parcel, distanceM: 1 }));
   };
 
   return (
