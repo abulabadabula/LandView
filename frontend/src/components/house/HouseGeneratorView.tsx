@@ -185,10 +185,8 @@ function makeTextSprite(text: string, colour: string, x: number, y: number, z: n
     context.fillStyle = "rgba(255,255,255,0.94)";
     context.strokeStyle = colour;
     context.lineWidth = 7;
-    context.beginPath();
-    context.roundRect(7, 7, 242, 82, 16);
-    context.fill();
-    context.stroke();
+    context.fillRect(7, 7, 242, 82);
+    context.strokeRect(7, 7, 242, 82);
     context.fillStyle = colour;
     context.font = "bold 34px sans-serif";
     context.textAlign = "center";
@@ -694,14 +692,6 @@ export default function HouseGeneratorView() {
         });
       }
 
-      // A subtle 1 m ground grid is centred on the parcel origin for scale context.
-      const extX = Math.max(...parcelMesh.boundary.map((point) => Math.abs(toScenePoint(point.lon, point.lat).x))) * 2 + 6;
-      const extZ = Math.max(...parcelMesh.boundary.map((point) => Math.abs(toScenePoint(point.lon, point.lat).z))) * 2 + 6;
-      const grid = new THREE.GridHelper(Math.max(extX, extZ), Math.ceil(Math.max(extX, extZ)), "#aab6a3", "#d2dad0");
-      grid.position.y = Math.max(0.02, parcelMesh.minElevationM - baseElevationM + 0.02);
-      grid.name = "Parcel-local metre reference grid";
-      // GridHelper is visual context only; the ground beneath it is the parcel DEM mesh.
-      terrainRoot.add(grid);
     } else if (!selectedAddress) {
       // Without a selected address, keep the standalone parameter preview usable.
       // Once an address is selected, never substitute this illustrative plane for real DEM data.
@@ -926,6 +916,53 @@ export default function HouseGeneratorView() {
               Could not load the selected parcel terrain: {parcelTerrainError}
             </div>
           ) : null}
+
+          {siteReady && parcelMesh && (
+            <div className="pointer-events-auto absolute right-3 top-14 z-10 max-h-[56%] w-[27rem] max-w-[48%] overflow-y-auto rounded-md border border-slate-300/70 bg-white/95 p-2.5 text-xs text-slate-900 shadow-lg backdrop-blur">
+              <div className="mb-1.5 font-semibold">Boundary control points</div>
+              <table className="w-full tabular-nums">
+                <thead className="sticky top-0 bg-slate-100 text-left">
+                  <tr>
+                    <th className="px-1 py-1">Point</th>
+                    <th className="px-1 py-1 text-right">Elev. (m)</th>
+                    <th className="px-1 py-1 text-right">To next (m)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parcelMesh.boundary.map((point) => (
+                    <tr key={point.index} className="border-t border-slate-200">
+                      <td className="px-1 py-1">P{point.index}</td>
+                      <td className="px-1 py-1 text-right">{point.elevationM.toFixed(2)}</td>
+                      <td className="px-1 py-1 text-right">{point.horizontalDistanceToNextM.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {parcelSetback?.polygons.map((polygon, polygonIndex) => (
+                <div key={polygonIndex} className="mt-3 border-t border-slate-200 pt-2">
+                  <div className="mb-1 font-semibold text-violet-800">Setback {parcelSetback.distanceM.toFixed(1)} m · NZTM2000</div>
+                  <table className="w-full tabular-nums">
+                    <thead className="sticky top-0 bg-violet-50 text-left">
+                      <tr>
+                        <th className="px-1 py-1">Point</th>
+                        <th className="px-1 py-1 text-right">Easting (m)</th>
+                        <th className="px-1 py-1 text-right">Northing (m)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {polygon.points.map((point) => (
+                        <tr key={point.index} className="border-t border-slate-200">
+                          <td className="px-1 py-1">SB{polygonIndex + 1}.{point.index}</td>
+                          <td className="px-1 py-1 text-right">{point.nztmE.toFixed(3)}</td>
+                          <td className="px-1 py-1 text-right">{point.nztmN.toFixed(3)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
 
           {metrics ? (
             <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-wrap gap-2">
