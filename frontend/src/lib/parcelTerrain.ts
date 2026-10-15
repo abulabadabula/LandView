@@ -1,4 +1,4 @@
-import type { AddressResult, BoundaryPoint, Parcel, TerrainGrid } from "@/types";
+import type { AddressResult, BoundaryPoint, Parcel, ParcelSetbackResult, TerrainGrid } from "@/types";
 import { sampleElevation, toLocal } from "@/lib/geo";
 
 const METRES_PER_DEGREE = 111_320;
@@ -345,13 +345,14 @@ export function parcelTerrainExport(
   parcel: Parcel,
   terrain: TerrainGrid,
   mesh: ParcelTerrainMesh,
+  setback: ParcelSetbackResult | null = null,
 ) {
   const triangles: number[][] = [];
   for (let i = 0; i < mesh.indices.length; i += 3) {
     triangles.push([mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]]);
   }
   return {
-    schemaVersion: "landview.parcel-terrain.v2",
+    schemaVersion: "landview.parcel-terrain.v3",
     generatedAt: new Date().toISOString(),
     address: {
       id: address.id,
@@ -374,6 +375,16 @@ export function parcelTerrainExport(
         horizontalDistanceM: point.horizontalDistanceToNextM,
       })),
     },
+    setback: setback ? {
+      distanceM: setback.distanceM,
+      coordinateSystem: "NZTM2000 / EPSG:2193",
+      method: "Negative planar buffer of the legal parcel polygon with mitred corners.",
+      warning: setback.warning,
+      polygons: setback.polygons.map((polygon) => ({
+        areaM2: polygon.areaM2,
+        controlPoints: polygon.points,
+      })),
+    } : null,
     terrain: {
       source: terrain.source,
       gridSizeM: terrain.sizeM,
