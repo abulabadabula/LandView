@@ -33,9 +33,10 @@ import { buildParcelTerrainMesh, parcelTerrainExport } from "@/lib/parcelTerrain
 
 const TERRAIN_COLOR = Color.fromCssColorString("#8eb49a");
 const BOUNDARY_COLOR = Color.fromCssColorString("#e87526");
+const SETBACK_COLOR = Color.fromCssColorString("#7354c7");
 
 export default function ParcelTerrainView() {
-  const { selected, parcel, parcelTerrain, parcelTerrainLoading, error } = useAppSelector((state) => state.lot);
+  const { selected, parcel, parcelTerrain, parcelTerrainLoading, parcelSetback, parcelSetbackLoading, parcelSetbackError, error } = useAppSelector((state) => state.lot);
   const mountRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const surfaceRef = useRef<Primitive | null>(null);
@@ -193,6 +194,65 @@ export default function ParcelTerrainView() {
       });
     }
 
+    if (parcelSetback?.polygons.length) {
+      for (const [polygonIndex, setbackPolygon] of parcelSetback.polygons.entries()) {
+        const positions = setbackPolygon.points.map((point) => {
+          const local = toLocal(
+            point.lon,
+            point.lat,
+            parcelTerrain.centerLon,
+            parcelTerrain.centerLat,
+          );
+          const elevation = sampleElevation(parcelTerrain, local.east, local.north);
+          return Cartesian3.fromDegrees(point.lon, point.lat, elevation + 0.32);
+        });
+
+        if (positions.length >= 3) {
+          viewer.entities.add({
+            name: `Setback line ${polygonIndex + 1} m=${parcelSetback.distanceM}`,
+            polyline: {
+              positions: [...positions, positions[0]],
+              width: 3,
+              material: SETBACK_COLOR,
+              clampToGround: false,
+              arcType: ArcType.NONE,
+            },
+          });
+        }
+
+        for (const [pointIndex, point] of setbackPolygon.points.entries()) {
+          const local = toLocal(
+            point.lon,
+            point.lat,
+            parcelTerrain.centerLon,
+            parcelTerrain.centerLat,
+          );
+          const elevation = sampleElevation(parcelTerrain, local.east, local.north);
+          viewer.entities.add({
+            name: "Setback control point " + point.index,
+            position: Cartesian3.fromDegrees(point.lon, point.lat, elevation + 0.42),
+            point: {
+              pixelSize: 6,
+              color: SETBACK_COLOR,
+              outlineColor: Color.WHITE,
+              outlineWidth: 1.5,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+            label: {
+              text: "SB" + (pointIndex + 1),
+              font: "bold 11px sans-serif",
+              fillColor: Color.WHITE,
+              outlineColor: SETBACK_COLOR,
+              outlineWidth: 3,
+              style: LabelStyle.FILL_AND_OUTLINE,
+              pixelOffset: new Cartesian2(0, 13),
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+          });
+        }
+      }
+    }
+
     for (let index = 0; index < mesh.boundary.length; index += 1) {
       const point = mesh.boundary[index];
       const next = mesh.boundary[(index + 1) % mesh.boundary.length];
@@ -269,7 +329,7 @@ export default function ParcelTerrainView() {
 
   const downloadJson = () => {
     if (!selected || !parcel || !parcelTerrain || !mesh) return;
-    const payload = parcelTerrainExport(selected, parcel, parcelTerrain, mesh);
+    const payload = parcelTerrainExport(selected, parcel, parcelTerrain, mesh, parcelSetback);
     const blobUrl = URL.createObjectURL(
       new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }),
     );
@@ -297,13 +357,21 @@ export default function ParcelTerrainView() {
         )}
         <div className="mt-1 text-white/80">Left-drag to rotate · Right-drag to tilt · Scroll to zoom</div>
         {parcelTerrainLoading && <div className="mt-1 text-amber-200">Loading parcel elevation grid…</div>}
+        {parcelSetbackLoading && <div className="mt-1 text-violet-200">Calculating 1 m inward setback…</div>}
+        {parcelSetbackError && <div className="mt-1 text-amber-200">Setback unavailable: {parcelSetbackError}</div>}
+        {parcelSetback?.warning && <div className="mt-1 text-violet-200">{parcelSetback.warning}</div>}
+        {parcelSetback?.polygons.length && (
+          <div className="mt-1 text-violet-200">
+            {parcelSetback.distanceM.toFixed(1)} m setback · {parcelSetback.polygons.length} line{parcelSetback.polygons.length === 1 ? "" : "s"}
+          </div>
+        )}
         {error && !parcelTerrainLoading && <div className="mt-1 text-amber-200">{error}</div>}
         {parcelTerrain && parcel && mesh && mesh.indices.length === 0 && (
           <div className="mt-1 text-amber-200">No terrain cells fell inside this parcel. Check parcel geometry and elevation coverage.</div>
         )}
       </div>
 
-      <div className="pointer-events-auto absolute right-3 top-3 z-10 w-64 max-w-[48%] rounded-md border border-slate-300/70 bg-slate-950/85 p-2 text-xs text-white shadow-lg">
+      <div className="pointer-events-auto absolute right-3 top-3 z-10 w-[25rem] max-w-[62%] max-h-[88%] overflow-y-auto rounded-md border border-slate-300/70 bg-slate-950/90 p-2 text-xs text-white shadow-lg">
         <div className="mb-2 font-semibold">Boundary elevations &amp; horizontal distances</div>
         <div className="max-h-64 overflow-auto">
           {mesh?.boundary.length ? (
@@ -325,6 +393,35 @@ export default function ParcelTerrainView() {
             <div className="py-2 text-white/70">Boundary elevations appear after the parcel terrain is loaded.</div>
           )}
         </div>
+        {parcelSetback && parcelSetback.polygons.length > 0 && (
+          <div className="mt-3 border-t border-white/20 pt-2">
+            <div className="mb-1 font-semibold text-violet-200">
+              {parcelSetback.distanceM.toFixed(1)} m setback control points · NZTM2000
+            </div>
+            <div className="max-h-40 overflow-auto">
+              <table className="w-full tabular-nums">
+                <thead className="sticky top-0 bg-slate-800 text-left">
+                  <tr>
+                    <th className="px-1 py-1">Point</th>
+                    <th className="px-1 py-1 text-right">Easting (m)</th>
+                    <th className="px-1 py-1 text-right">Northing (m)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parcelSetback.polygons.flatMap((polygon, polygonIndex) =>
+                    polygon.points.map((point) => (
+                      <tr key={`${polygonIndex}-${point.index}`} className="border-t border-white/10">
+                        <td className="px-1 py-1">SB{polygonIndex + 1}.{point.index}</td>
+                        <td className="px-1 py-1 text-right">{fmt(point.nztmE, 3)}</td>
+                        <td className="px-1 py-1 text-right">{fmt(point.nztmN, 3)}</td>
+                      </tr>
+                    )),
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         <Button className="mt-2 w-full" size="sm" onClick={downloadJson} disabled={!mesh || mesh.indices.length < 3}>
           Download terrain JSON
         </Button>
