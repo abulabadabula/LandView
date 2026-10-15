@@ -431,6 +431,8 @@ export default function HouseGeneratorView() {
   const [generation, setGeneration] = useState(0);
   const [webglError, setWebglError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
+  // Keep viewport overlays collapsed by default so the model remains easy to inspect.
+  const [showViewportInfo, setShowViewportInfo] = useState(false);
   const dispatch = useAppDispatch();
   const {
     selected: selectedAddress,
@@ -887,33 +889,47 @@ export default function HouseGeneratorView() {
           </div>
 
           <div className="absolute right-3 top-3 z-10 flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-white/70 bg-white/90 shadow-sm"
+              onClick={() => setShowViewportInfo((visible) => !visible)}
+              title={showViewportInfo ? "Hide viewport information" : "Show viewport information"}
+              aria-label={showViewportInfo ? "Hide viewport information" : "Show viewport information"}
+              aria-expanded={showViewportInfo}
+            >
+              {showViewportInfo ? <EyeOff /> : <Eye />}
+              {showViewportInfo ? "Hide info" : "Show info"}
+            </Button>
             <Button variant="outline" size="sm" className="border-white/70 bg-white/90 shadow-sm" onClick={resetCamera} title="Reset camera"><RotateCcw /> Reset view</Button>
             <Button variant="outline" size="sm" className="border-white/70 bg-white/90 shadow-sm" onClick={() => setGeneration((value) => value + 1)} title="Rebuild the same design parameters"><Sparkles /> Rebuild</Button>
           </div>
 
-          {selectedTerrainSummary ? (
-            <div className="pointer-events-none absolute left-3 top-14 z-10 max-w-[min(30rem,80%)] rounded-md border border-white/70 bg-white/90 p-2.5 text-xs shadow-sm backdrop-blur">
-              <div className="font-semibold">Selected parcel · shared Parcel 3D data</div>
-              <div className="mt-1 text-muted-foreground">
-                Area {selectedTerrainSummary.areaM2.toLocaleString("en-NZ", { maximumFractionDigits: 1 })} m² · DEM {selectedTerrainSummary.source}
+          {showViewportInfo && (
+  selectedTerrainSummary ? (
+              <div className="pointer-events-none absolute left-3 top-14 z-10 max-w-[min(30rem,80%)] rounded-md border border-white/70 bg-white/90 p-2.5 text-xs shadow-sm backdrop-blur">
+                <div className="font-semibold">Selected parcel · shared Parcel 3D data</div>
+                <div className="mt-1 text-muted-foreground">
+                  Area {selectedTerrainSummary.areaM2.toLocaleString("en-NZ", { maximumFractionDigits: 1 })} m² · DEM {selectedTerrainSummary.source}
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  Elevation {selectedTerrainSummary.minElevationM.toFixed(2)}–{selectedTerrainSummary.maxElevationM.toFixed(2)} m · grid spacing ≈ {selectedTerrainSummary.spacingM.toFixed(2)} m
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  {selectedTerrainSummary.boundaryCount} boundary points · {selectedTerrainSummary.setbackCount} setback points
+                </div>
+                {parcelSetbackLoading ? <div className="mt-1 text-violet-700">Loading 1 m setback geometry…</div> : null}
+                {parcelSetbackError ? <div className="mt-1 text-amber-700">Setback load failed: {parcelSetbackError}</div> : null}
+                {parcelSetback?.warning ? <div className="mt-1 text-amber-700">{parcelSetback.warning}</div> : null}
               </div>
-              <div className="mt-1 text-muted-foreground">
-                Elevation {selectedTerrainSummary.minElevationM.toFixed(2)}–{selectedTerrainSummary.maxElevationM.toFixed(2)} m · grid spacing ≈ {selectedTerrainSummary.spacingM.toFixed(2)} m
+            ) : selectedAddress && parcelTerrainError ? (
+              <div className="pointer-events-none absolute left-3 top-14 z-10 max-w-md rounded-md border border-amber-300 bg-amber-50/95 p-3 text-xs text-amber-900 shadow-sm">
+                Could not load the selected parcel terrain: {parcelTerrainError}
               </div>
-              <div className="mt-1 text-muted-foreground">
-                {selectedTerrainSummary.boundaryCount} boundary points · {selectedTerrainSummary.setbackCount} setback points
-              </div>
-              {parcelSetbackLoading ? <div className="mt-1 text-violet-700">Loading 1 m setback geometry…</div> : null}
-              {parcelSetbackError ? <div className="mt-1 text-amber-700">Setback load failed: {parcelSetbackError}</div> : null}
-              {parcelSetback?.warning ? <div className="mt-1 text-amber-700">{parcelSetback.warning}</div> : null}
-            </div>
-          ) : selectedAddress && parcelTerrainError ? (
-            <div className="pointer-events-none absolute left-3 top-14 z-10 max-w-md rounded-md border border-amber-300 bg-amber-50/95 p-3 text-xs text-amber-900 shadow-sm">
-              Could not load the selected parcel terrain: {parcelTerrainError}
-            </div>
-          ) : null}
+            ) : null
+          )}
 
-          {siteReady && parcelMesh && (
+          {showViewportInfo && siteReady && parcelMesh && (
             <div className="pointer-events-auto absolute right-3 top-14 z-10 max-h-[56%] w-[27rem] max-w-[48%] overflow-y-auto rounded-md border border-slate-300/70 bg-white/95 p-2.5 text-xs text-slate-900 shadow-lg backdrop-blur">
               <div className="mb-1.5 font-semibold">Boundary control points</div>
               <table className="w-full tabular-nums">
@@ -960,7 +976,7 @@ export default function HouseGeneratorView() {
             </div>
           )}
 
-          {metrics ? (
+          {showViewportInfo && metrics ? (
             <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-wrap gap-2">
               <Metric label="Main block" value={metrics.mainWidthM.toFixed(1) + " × " + metrics.mainDepthM.toFixed(1) + " m"} />
               <Metric label="Approx. height" value={metrics.heightM.toFixed(1) + " m"} />
