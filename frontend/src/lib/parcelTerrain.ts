@@ -265,8 +265,6 @@ export function buildParcelTerrainMesh(
   const indices: number[] = [];
   // Adjacent clipped patches share vertices so lighting remains continuous.
   const vertexIndexByKey = new Map<string, number>();
-  const cosine = Math.cos((terrain.centerLat * Math.PI) / 180);
-
   const addVertex = (point: TerrainPoint) => {
     const key = Math.round(point.east * 1000) + ":" + Math.round(point.north * 1000);
     const existing = vertexIndexByKey.get(key);
