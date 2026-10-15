@@ -6,11 +6,13 @@ from app.schemas import (
     ContextCollection,
     Environment,
     Parcel,
+    ParcelSetbackRequest,
+    ParcelSetbackResult,
     TerrainGrid,
 )
 from app.services import buildings as building_service
 from app.services import context as context_service
-from app.services import environment, linz
+from app.services import environment, linz, setback as setback_service
 
 router = APIRouter(prefix="/api")
 
@@ -25,6 +27,12 @@ async def search_address(q: str = Query(min_length=3, max_length=120)):
 @router.get("/lot", response_model=Parcel | None)
 async def lot(lat: float = Query(ge=-48, le=-33), lon: float = Query(ge=165, le=180)):
     return await linz.get_parcel_at(lat, lon)
+
+@router.post("/parcel/setback", response_model=ParcelSetbackResult)
+async def parcel_setback(request: ParcelSetbackRequest):
+    """Return an inward parcel buffer and its WGS84/NZTM control coordinates."""
+    return setback_service.create_parcel_setback(request)
+
 
 @router.get("/environment", response_model=Environment)
 async def env(lat: float = Query(ge=-48, le=-33), lon: float = Query(ge=165, le=180)):
