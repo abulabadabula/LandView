@@ -20,6 +20,7 @@ interface LotState {
   terrain: TerrainGrid | null;
   parcelTerrain: TerrainGrid | null;
   parcelTerrainLoading: boolean;
+  parcelTerrainError: string | null;
   parcelSetback: ParcelSetbackResult | null;
   parcelSetbackLoading: boolean;
   parcelSetbackError: string | null;
@@ -39,6 +40,7 @@ const initialState: LotState = {
   terrain: null,
   parcelTerrain: null,
   parcelTerrainLoading: false,
+  parcelTerrainError: null,
   parcelSetback: null,
   parcelSetbackLoading: false,
   parcelSetbackError: null,
@@ -124,6 +126,7 @@ const lotSlice = createSlice({
       s.selected = a.meta.arg;
       s.parcelTerrain = null;
       s.parcelTerrainLoading = false;
+      s.parcelTerrainError = null;
       s.parcelSetback = null;
       s.parcelSetbackLoading = false;
       s.parcelSetbackError = null;
@@ -160,15 +163,18 @@ const lotSlice = createSlice({
     });
     b.addCase(loadParcelTerrain.pending, (s) => {
       s.parcelTerrainLoading = true;
+      s.parcelTerrainError = null;
       s.error = null;
     });
     b.addCase(loadParcelTerrain.fulfilled, (s, a) => {
       s.parcelTerrainLoading = false;
+      s.parcelTerrainError = null;
       s.parcelTerrain = a.payload;
     });
     b.addCase(loadParcelTerrain.rejected, (s, a) => {
       s.parcelTerrainLoading = false;
-      s.error = a.error.message ?? "Failed to load parcel terrain";
+      s.parcelTerrainError = a.error.message ?? "Failed to load parcel terrain";
+      s.error = s.parcelTerrainError;
     });
     b.addCase(loadParcelSetback.pending, (s) => {
       s.parcelSetbackLoading = true;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Check,
@@ -17,7 +17,11 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAppSelector } from "@/store";
+import { useAppDispatch, useAppSelector } from "@/store";
+import { loadParcelSetback, loadParcelTerrain } from "@/store/lotSlice";
+import { sampleElevation, toLocal } from "@/lib/geo";
+import { buildParcelTerrainMesh } from "@/lib/parcelTerrain";
+import type { ParcelTerrainMesh } from "@/lib/parcelTerrain";
 
 type RoofStyle = "Gable roof" | "Hip roof" | "Flat roof" | "Mono-pitch roof" | "Mixed roof";
 type GarageStyle = "No garage" | "Single garage" | "Double garage" | "Carport";
@@ -39,6 +43,8 @@ interface HouseParameters {
   showWindows: boolean;
   showTerrain: boolean;
   showGarage: boolean;
+  showBoundary: boolean;
+  showSetback: boolean;
 }
 
 interface MassingMetrics {
@@ -66,6 +72,8 @@ const INITIAL_PARAMETERS: HouseParameters = {
   showWindows: true,
   showTerrain: true,
   showGarage: true,
+  showBoundary: true,
+  showSetback: true,
 };
 
 const GARAGE_DIMENSIONS: Record<GarageStyle, { width: number; depth: number }> = {
@@ -168,6 +176,34 @@ function addRoof(parent: any, width: number, depth: number, eaveY: number, pitch
   return roofGroup;
 }
 
+function makeTextSprite(text: string, colour: string, x: number, y: number, z: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "rgba(255,255,255,0.94)";
+    context.strokeStyle = colour;
+    context.lineWidth = 7;
+    context.beginPath();
+    context.roundRect(7, 7, 242, 82, 16);
+    context.fill();
+    context.stroke();
+    context.fillStyle = colour;
+    context.font = "bold 34px sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text, 128, 48);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+  sprite.name = "Geospatial control point label " + text;
+  sprite.position.set(x, y, z);
+  sprite.scale.set(1.7, 0.64, 1);
+  return sprite;
+}
+
 function addTerrain(parent: any, extentX: number, extentZ: number, slope: number) {
   const terrainGroup = new THREE.Group();
   terrainGroup.name = "Terrain and ground grid";
@@ -214,7 +250,12 @@ function addTerrain(parent: any, extentX: number, extentZ: number, slope: number
   return terrainGroup;
 }
 
-function buildParametricHouse(parent: any, params: HouseParameters, slopePercent: number): MassingMetrics {
+function buildParametricHouse(
+  parent: any,
+  params: HouseParameters,
+  slopePercent: number,
+  groundYAt?: (eastM: number, northM: number) => number,
+): MassingMetrics {
   const garageDimensions = GARAGE_DIMENSIONS[params.garage];
   const garageAreaM2 = garageDimensions.width * garageDimensions.depth;
   const targetForMainHouse = params.gfaBasis === "Includes garage"
@@ -234,7 +275,23 @@ function buildParametricHouse(parent: any, params: HouseParameters, slopePercent
   const rearExtent = Math.max(mainDepth / 2, garageCenterZ + garageDepth / 2);
   const frontExtent = Math.max(mainDepth / 2, garageCenterZ - garageDepth / 2);
   const maximumAbsZ = Math.max(Math.abs(rearExtent), Math.abs(frontExtent));
-  const buildingBaseY = slope * maximumAbsZ + (params.terrainAdaptation === "Adapt to terrain" ? 0.42 : 0.55);
+  const terrainAt = groundYAt ?? ((_east: number, north: number) => -slope * north);
+  const minX = -mainWidth / 2 - (params.showGarage && params.garage !== "No garage" ? garageDimensions.width : 0);
+  const maxX = mainWidth / 2;
+  const minZ = Math.min(-mainDepth / 2, garageCenterZ - garageDepth / 2);
+  const maxZ = Math.max(mainDepth / 2, garageCenterZ + garageDepth / 2);
+  let maxGroundY = Number.NEGATIVE_INFINITY;
+  // Sample the planned building zone against the actual parcel DEM when supplied.
+  for (let row = 0; row <= 6; row += 1) {
+    for (let col = 0; col <= 6; col += 1) {
+      const x = minX + ((maxX - minX) * col) / 6;
+      const z = minZ + ((maxZ - minZ) * row) / 6;
+      maxGroundY = Math.max(maxGroundY, terrainAt(x, z));
+    }
+  }
+  if (!Number.isFinite(maxGroundY)) maxGroundY = 0;
+  const freeboard = params.terrainAdaptation === "Adapt to terrain" ? 0.42 : 0.55;
+  const buildingBaseY = maxGroundY + freeboard;
 
   if (params.terrainAdaptation === "Level pad") {
     addBox(parent, "Level pad platform (conceptual)", -garageDimensions.width / 2, buildingBaseY - 0.23, 0, mainWidth + garageDimensions.width + 1.4, 0.36, Math.max(mainDepth, garageDimensions.depth) + 1.3, "#b7b2a3");
@@ -308,7 +365,7 @@ function buildParametricHouse(parent: any, params: HouseParameters, slopePercent
       const x = xMin + ((xMax - xMin) * i) / 4;
       for (let j = 0; j < 4; j += 1) {
         const z = zMin + ((zMax - zMin) * j) / 3;
-        const groundY = -slope * z;
+        const groundY = terrainAt(x, z);
         const height = buildingBaseY - groundY;
         if (height > 0.18) {
           const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, height, 8), makeMaterial("#8c9990"));
@@ -373,12 +430,53 @@ export default function HouseGeneratorView() {
   const controlsRef = useRef<any>(null);
   const modelRootRef = useRef<any>(null);
   const terrainRootRef = useRef<any>(null);
+  const boundaryRootRef = useRef<any>(null);
+  const setbackRootRef = useRef<any>(null);
   const [params, setParams] = useState<HouseParameters>(INITIAL_PARAMETERS);
   const [metrics, setMetrics] = useState<MassingMetrics | null>(null);
   const [generation, setGeneration] = useState(0);
   const [webglError, setWebglError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
-  const selectedAddress = useAppSelector((s) => s.lot.selected);
+  const dispatch = useAppDispatch();
+  const {
+    selected: selectedAddress,
+    parcel,
+    status: lotStatus,
+    parcelTerrain,
+    parcelTerrainLoading,
+    parcelTerrainError,
+    parcelSetback,
+    parcelSetbackLoading,
+    parcelSetbackError,
+  } = useAppSelector((s) => s.lot);
+
+  const siteReady = lotStatus === "ready" && !!selectedAddress && !!parcel && !!parcelTerrain;
+  const parcelMesh = useMemo(
+    () => siteReady && parcel && parcelTerrain ? buildParcelTerrainMesh(parcel, parcelTerrain) : null,
+    [siteReady, parcel, parcelTerrain],
+  );
+  const siteAnchor = useMemo(() => {
+    if (!parcel?.boundary.length) return null;
+    const points = parcel.boundary;
+    return {
+      lon: points.reduce((sum, point) => sum + point.lon, 0) / points.length,
+      lat: points.reduce((sum, point) => sum + point.lat, 0) / points.length,
+    };
+  }, [parcel]);
+
+  useEffect(() => {
+    if (lotStatus !== "ready" || !selectedAddress || !parcel) return;
+    if (!parcelTerrain && !parcelTerrainLoading && !parcelTerrainError) {
+      void dispatch(loadParcelTerrain({ address: selectedAddress, parcel }));
+    }
+    if (!parcelSetback && !parcelSetbackLoading && !parcelSetbackError) {
+      void dispatch(loadParcelSetback({ parcel, distanceM: 1 }));
+    }
+  }, [
+    dispatch, lotStatus, selectedAddress, parcel,
+    parcelTerrain, parcelTerrainLoading, parcelTerrainError,
+    parcelSetback, parcelSetbackLoading, parcelSetbackError,
+  ]);
 
   const update = <K extends keyof HouseParameters>(key: K, value: HouseParameters[K]) => {
     setParams((current) => ({ ...current, [key]: value }));
@@ -430,12 +528,20 @@ export default function HouseGeneratorView() {
       modelRoot.name = "LandView parametric house candidate";
       scene.add(modelRoot);
       const terrainRoot = new THREE.Group();
-      terrainRoot.name = "Context terrain";
+      terrainRoot.name = "Parcel terrain surface";
       scene.add(terrainRoot);
+      const boundaryRoot = new THREE.Group();
+      boundaryRoot.name = "Parcel boundary and endpoint controls";
+      scene.add(boundaryRoot);
+      const setbackRoot = new THREE.Group();
+      setbackRoot.name = "Parcel inward setback";
+      scene.add(setbackRoot);
       cameraRef.current = camera;
       controlsRef.current = controls;
       modelRootRef.current = modelRoot;
       terrainRootRef.current = terrainRoot;
+      boundaryRootRef.current = boundaryRoot;
+      setbackRootRef.current = setbackRoot;
 
       const resize = () => {
         const width = Math.max(host.clientWidth, 1);
@@ -460,12 +566,16 @@ export default function HouseGeneratorView() {
         controls.dispose();
         disposeGroup(modelRoot);
         disposeGroup(terrainRoot);
+        disposeGroup(boundaryRoot);
+        disposeGroup(setbackRoot);
         renderer.dispose();
         if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
         cameraRef.current = null;
         controlsRef.current = null;
         modelRootRef.current = null;
         terrainRootRef.current = null;
+        boundaryRootRef.current = null;
+        setbackRootRef.current = null;
       };
     } catch (error) {
       setWebglError(error instanceof Error ? error.message : "WebGL could not be initialised in this browser.");
@@ -476,23 +586,160 @@ export default function HouseGeneratorView() {
   useEffect(() => {
     const modelRoot = modelRootRef.current;
     const terrainRoot = terrainRootRef.current;
-    if (!modelRoot || !terrainRoot) return;
+    const boundaryRoot = boundaryRootRef.current;
+    const setbackRoot = setbackRootRef.current;
+    if (!modelRoot || !terrainRoot || !boundaryRoot || !setbackRoot) return;
     disposeGroup(modelRoot);
     disposeGroup(terrainRoot);
+    disposeGroup(boundaryRoot);
+    disposeGroup(setbackRoot);
+
     const garageWidth = params.showGarage ? GARAGE_DIMENSIONS[params.garage].width : 0;
     const targetPerFloor = params.grossFloorAreaTargetM2 / Math.max(params.storeys, 1);
     const extentWidth = Math.max(Math.sqrt(targetPerFloor * 1.25) + garageWidth + 14, 24);
     const extentDepth = Math.max(Math.sqrt(targetPerFloor / 1.25) + 16, 24);
-    addTerrain(terrainRoot, extentWidth, extentDepth, params.terrainSlopePercent / 100);
-    const modelMetrics = buildParametricHouse(modelRoot, params, params.terrainSlopePercent);
-    terrainRoot.visible = params.showTerrain;
+
+    let baseElevationM = 0;
+    let groundYAt: ((eastM: number, northM: number) => number) | undefined;
+
+    if (siteReady && parcel && parcelTerrain && parcelMesh && siteAnchor) {
+      baseElevationM = parcelMesh.minElevationM;
+      const terrainCentreAtAnchor = toLocal(
+        siteAnchor.lon, siteAnchor.lat, parcelTerrain.centerLon, parcelTerrain.centerLat,
+      );
+      const toScenePoint = (lon: number, lat: number) => {
+        const local = toLocal(lon, lat, siteAnchor.lon, siteAnchor.lat);
+        return { x: local.east, z: -local.north };
+      };
+      const terrainGeometry = new THREE.BufferGeometry();
+      const positions: number[] = [];
+      parcelMesh.vertices.forEach((vertex) => {
+        const local = toScenePoint(vertex.lon, vertex.lat);
+        positions.push(local.x, vertex.elevationM - baseElevationM, local.z);
+      });
+      terrainGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      terrainGeometry.setIndex(parcelMesh.indices);
+      terrainGeometry.computeVertexNormals();
+      const terrainSurface = new THREE.Mesh(
+        terrainGeometry,
+        new THREE.MeshStandardMaterial({
+          color: "#cbd6c1",
+          roughness: 0.96,
+          side: THREE.DoubleSide,
+        }),
+      );
+      terrainSurface.name = "Parcel 3D DEM surface (shared parcel terrain grid)";
+      terrainSurface.receiveShadow = true;
+      terrainRoot.add(terrainSurface);
+
+      groundYAt = (eastM, northM) => sampleElevation(
+        parcelTerrain,
+        terrainCentreAtAnchor.east + eastM,
+        terrainCentreAtAnchor.north - northM,
+      ) - baseElevationM;
+
+      const boundaryPositions: THREE.Vector3[] = [];
+      for (const point of parcelMesh.boundary) {
+        const local = toScenePoint(point.lon, point.lat);
+        const groundY = point.elevationM - baseElevationM + 0.06;
+        boundaryPositions.push(new THREE.Vector3(local.x, groundY, local.z));
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(0.12, 12, 8),
+          new THREE.MeshStandardMaterial({ color: "#e87526", emissive: "#6b2f0a" }),
+        );
+        marker.name = "Boundary endpoint P" + point.index;
+        marker.position.set(local.x, groundY + 0.04, local.z);
+        boundaryRoot.add(marker);
+        boundaryRoot.add(makeTextSprite("P" + point.index, "#9a4316", local.x, groundY + 0.72, local.z));
+      }
+      if (boundaryPositions.length >= 3) {
+        const line = new THREE.LineLoop(
+          new THREE.BufferGeometry().setFromPoints(boundaryPositions),
+          new THREE.LineBasicMaterial({ color: "#e87526", linewidth: 2 }),
+        );
+        line.name = "Legal parcel boundary";
+        boundaryRoot.add(line);
+      }
+
+      for (const [polyIndex, setbackPolygon] of (parcelSetback?.polygons ?? []).entries()) {
+        const points = setbackPolygon.points.map((point) => {
+          const local = toScenePoint(point.lon, point.lat);
+          const groundY = sampleElevation(
+            parcelTerrain,
+            toLocal(point.lon, point.lat, parcelTerrain.centerLon, parcelTerrain.centerLat).east,
+            toLocal(point.lon, point.lat, parcelTerrain.centerLon, parcelTerrain.centerLat).north,
+          ) - baseElevationM + 0.11;
+          return new THREE.Vector3(local.x, groundY, local.z);
+        });
+        if (points.length >= 3) {
+          const line = new THREE.LineLoop(
+            new THREE.BufferGeometry().setFromPoints(points),
+            new THREE.LineBasicMaterial({ color: "#7354c7" }),
+          );
+          line.name = "Parcel setback " + (polyIndex + 1) + " m=" + parcelSetback?.distanceM;
+          setbackRoot.add(line);
+        }
+        setbackPolygon.points.forEach((point, pointIndex) => {
+          const local = toScenePoint(point.lon, point.lat);
+          const gridLocal = toLocal(point.lon, point.lat, parcelTerrain.centerLon, parcelTerrain.centerLat);
+          const groundY = sampleElevation(parcelTerrain, gridLocal.east, gridLocal.north) - baseElevationM;
+          const marker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.09, 10, 8),
+            new THREE.MeshStandardMaterial({ color: "#7354c7" }),
+          );
+          marker.name = "Setback control point SB" + (pointIndex + 1);
+          marker.position.set(local.x, groundY + 0.13, local.z);
+          setbackRoot.add(marker);
+          setbackRoot.add(makeTextSprite("SB" + (pointIndex + 1), "#5636a6", local.x, groundY + 0.7, local.z));
+        });
+      }
+
+      // A subtle 1 m ground grid is centred on the parcel origin for scale context.
+      const extX = Math.max(...parcelMesh.boundary.map((point) => Math.abs(toScenePoint(point.lon, point.lat).x))) * 2 + 6;
+      const extZ = Math.max(...parcelMesh.boundary.map((point) => Math.abs(toScenePoint(point.lon, point.lat).z))) * 2 + 6;
+      const grid = new THREE.GridHelper(Math.max(extX, extZ), Math.ceil(Math.max(extX, extZ)), "#aab6a3", "#d2dad0");
+      grid.position.y = Math.max(0.02, parcelMesh.minElevationM - baseElevationM + 0.02);
+      grid.name = "Parcel-local metre reference grid";
+      // GridHelper is visual context only; the ground beneath it is the parcel DEM mesh.
+      terrainRoot.add(grid);
+    } else if (!selectedAddress) {
+      // Without a selected address, keep the standalone parameter preview usable.
+      // Once an address is selected, never substitute this illustrative plane for real DEM data.
+      addTerrain(terrainRoot, extentWidth, extentDepth, params.terrainSlopePercent / 100);
+      groundYAt = (_eastM, northM) => -(params.terrainSlopePercent / 100) * northM;
+    } else {
+      // Keep the house preview available while the requested parcel data is loading, but do not fake site terrain.
+      groundYAt = () => 0;
+    }
+
+    const modelMetrics = buildParametricHouse(
+      modelRoot, params, siteReady ? 0 : params.terrainSlopePercent, groundYAt,
+    );
+    terrainRoot.visible = params.showTerrain && (siteReady || !selectedAddress);
+    boundaryRoot.visible = siteReady && params.showBoundary;
+    setbackRoot.visible = siteReady && params.showSetback;
     modelRoot.updateMatrixWorld(true);
     setMetrics(modelMetrics);
     if (controlsRef.current) {
       controlsRef.current.target.set(0, modelMetrics.heightM * 0.43, 0);
       controlsRef.current.update();
     }
-  }, [params, generation]);
+  }, [
+    params, generation, siteReady, parcel, parcelTerrain, parcelMesh,
+    parcelSetback, siteAnchor, selectedAddress,
+  ]);
+
+  const selectedTerrainSummary = siteReady && parcel && parcelTerrain && parcelMesh
+    ? {
+        areaM2: parcel.areaM2,
+        source: parcelTerrain.source,
+        spacingM: parcelMesh.gridSpacingM,
+        minElevationM: parcelMesh.minElevationM,
+        maxElevationM: parcelMesh.maxElevationM,
+        boundaryCount: parcelMesh.boundary.length,
+        setbackCount: parcelSetback?.polygons.reduce((sum, polygon) => sum + polygon.points.length, 0) ?? 0,
+      }
+    : null;
 
   const resetCamera = useCallback(() => {
     if (!cameraRef.current || !controlsRef.current) return;
@@ -607,8 +854,8 @@ export default function HouseGeneratorView() {
             </div>
 
             <div className="space-y-4 border-t pt-4">
-              <Field label="Site slope" hint={params.terrainSlopePercent + "%"}>
-                <input aria-label="Site slope percentage" className="w-full accent-primary" type="range" min={0} max={25} step={1} value={params.terrainSlopePercent} onChange={(event) => update("terrainSlopePercent", Number(event.target.value))} />
+              <Field label="Illustrative slope" hint={siteReady ? "Using selected parcel DEM" : params.terrainSlopePercent + "%"}>
+                <input aria-label="Illustrative site slope percentage" disabled={siteReady} className="w-full accent-primary disabled:opacity-40" type="range" min={0} max={25} step={1} value={params.terrainSlopePercent} onChange={(event) => update("terrainSlopePercent", Number(event.target.value))} />
                 <div className="flex justify-between text-[10px] text-muted-foreground"><span>Flat · 0%</span><span>Steep · 25%</span></div>
               </Field>
               <Field label="Roof pitch" hint={params.roofPitchDeg + "°"}>
@@ -622,13 +869,15 @@ export default function HouseGeneratorView() {
               <ToggleRow label="Show roof" checked={params.showRoof} onChange={(value) => update("showRoof", value)} />
               <ToggleRow label="Show window panels" checked={params.showWindows} onChange={(value) => update("showWindows", value)} />
               <ToggleRow label="Show terrain mesh" checked={params.showTerrain} onChange={(value) => update("showTerrain", value)} />
+              <ToggleRow label="Show parcel boundary and endpoints" checked={params.showBoundary} onChange={(value) => update("showBoundary", value)} />
+              <ToggleRow label="Show 1 m setback line" checked={params.showSetback} onChange={(value) => update("showSetback", value)} />
               <ToggleRow label="Show garage" checked={params.showGarage} onChange={(value) => update("showGarage", value)} />
             </div>
 
             <div className="rounded-lg border bg-muted/35 p-3">
               <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold"><Info className="size-4 text-primary" /> How to interact</div>
               <p className="text-xs leading-5 text-muted-foreground">
-                Drag to orbit, right-drag to pan, and scroll to zoom. Changes rebuild the concept geometry immediately. Bedroom count is a design-program input at this stage; internal room partitions are not yet generated.
+                Drag to orbit, right-drag to pan, and scroll to zoom. The selected parcel DEM, exact boundary endpoints and 1 m setback line are shared with Parcel 3D. Changes rebuild the concept geometry immediately. Bedroom count is a design-program input at this stage; internal room partitions are not yet generated.
               </p>
             </div>
           </div>
@@ -648,12 +897,35 @@ export default function HouseGeneratorView() {
           <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-2">
             <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur"><span className="mr-1.5 inline-block size-1.5 rounded-full bg-emerald-600" />Three.js · Parametric massing</span>
             <span className="rounded-md border border-amber-200 bg-amber-50/95 px-2.5 py-1 text-xs font-medium text-amber-900 shadow-sm"><TriangleAlert className="mr-1 inline size-3.5" /> Unverified concept</span>
+            {selectedAddress && !siteReady ? <span className="rounded-md border bg-white/95 px-2.5 py-1 text-xs shadow-sm">{parcelTerrainLoading || lotStatus === "loading" ? "Loading selected parcel terrain…" : parcelTerrainError ? "Parcel terrain unavailable" : "Waiting for parcel data"}</span> : null}
           </div>
 
           <div className="absolute right-3 top-3 z-10 flex gap-2">
             <Button variant="outline" size="sm" className="border-white/70 bg-white/90 shadow-sm" onClick={resetCamera} title="Reset camera"><RotateCcw /> Reset view</Button>
             <Button variant="outline" size="sm" className="border-white/70 bg-white/90 shadow-sm" onClick={() => setGeneration((value) => value + 1)} title="Rebuild the same design parameters"><Sparkles /> Rebuild</Button>
           </div>
+
+          {selectedTerrainSummary ? (
+            <div className="pointer-events-none absolute left-3 top-14 z-10 max-w-[min(30rem,80%)] rounded-md border border-white/70 bg-white/90 p-2.5 text-xs shadow-sm backdrop-blur">
+              <div className="font-semibold">Selected parcel · shared Parcel 3D data</div>
+              <div className="mt-1 text-muted-foreground">
+                Area {selectedTerrainSummary.areaM2.toLocaleString("en-NZ", { maximumFractionDigits: 1 })} m² · DEM {selectedTerrainSummary.source}
+              </div>
+              <div className="mt-1 text-muted-foreground">
+                Elevation {selectedTerrainSummary.minElevationM.toFixed(2)}–{selectedTerrainSummary.maxElevationM.toFixed(2)} m · grid spacing ≈ {selectedTerrainSummary.spacingM.toFixed(2)} m
+              </div>
+              <div className="mt-1 text-muted-foreground">
+                {selectedTerrainSummary.boundaryCount} boundary points · {selectedTerrainSummary.setbackCount} setback points
+              </div>
+              {parcelSetbackLoading ? <div className="mt-1 text-violet-700">Loading 1 m setback geometry…</div> : null}
+              {parcelSetbackError ? <div className="mt-1 text-amber-700">Setback load failed: {parcelSetbackError}</div> : null}
+              {parcelSetback?.warning ? <div className="mt-1 text-amber-700">{parcelSetback.warning}</div> : null}
+            </div>
+          ) : selectedAddress && parcelTerrainError ? (
+            <div className="pointer-events-none absolute left-3 top-14 z-10 max-w-md rounded-md border border-amber-300 bg-amber-50/95 p-3 text-xs text-amber-900 shadow-sm">
+              Could not load the selected parcel terrain: {parcelTerrainError}
+            </div>
+          ) : null}
 
           {metrics ? (
             <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-wrap gap-2">
