@@ -78,6 +78,12 @@ Parcel 3D uses the selected parcel's LINZ boundary and a local elevation grid to
 
 The 1 m setback is a geometric inward buffer from the supplied parcel polygon in NZTM2000; it does not infer jurisdiction-specific planning rules or prove that 1 m is the legally required setback. Confirm applicable council planning controls and survey data before relying on it for design. The mesh is intended for visualisation and early-stage site context, not survey, setting-out, earthworks quantities or engineering design. The visible perimeter follows the parcel outline, but elevation resolution and datum still depend on the source grid. When LINZ LiDAR elevation tiles are not configured or available, the backend falls back to a coarser elevation source/grid; check the exported source and spacing before using the data.
 
+## Three.js parametric House Generator workspace
+
+The toolbar opens a dedicated **House Generator** workspace. It builds an interactive Three.js concept massing from the inputs (storeys, bedrooms, target gross floor area, style, roof, garage and terrain adaptation). Users can adjust site slope and roof pitch, toggle terrain/roof/windows/garage, orbit/pan/zoom, reset the camera, rebuild the same parameters and export the current parametric mesh to GLB. The initial inputs match `docs/examples/house-design-input.example.json`.
+
+This is a deterministic early-stage 3D massing preview, not an AI-generated house, room-layout solution, surveyed site fit or building-consent/construction model. Bedroom count is captured as a design-program input; room partitions are not yet generated. The selected LandView address is shown for context only and is not yet used to place or validate the model on the parcel. The GLB export is a review asset, not a verified BIM model.
+
 ## AI House Generator contracts
 
 The AI House Generator design brief is defined in [the JSON Schema](docs/schemas/HouseDesignSpec.schema.json) with a [design-input example](docs/examples/house-design-input.example.json). The example requests a two-storey contemporary house, four bedrooms, 200 m² target GFA, gable roof, double garage and terrain adaptation; it is input data only, not a generated house model. See [the design and validation contract](docs/house-design-generator.md) for deterministic parametric geometry rules, coordinate conventions, validation states and API contracts.

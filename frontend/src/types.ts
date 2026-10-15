@@ -87,5 +87,5 @@ export interface ContextFeature {
 }
 export interface ContextCollection { features: ContextFeature[]; osmAvailable: boolean }
 
-export type ViewMode = "2d" | "3d" | "parcel3d";
+export type ViewMode = "2d" | "3d" | "parcel3d" | "house3d";
 export type Basemap = "streets" | "aerial" | "topo";

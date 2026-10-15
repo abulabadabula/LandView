@@ -1,4 +1,4 @@
-import { Box, Building2, Crosshair, Map as MapIcon, Mountain } from "lucide-react";
+import { Box, Building2, Crosshair, House, Map as MapIcon, Mountain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { loadParcelSetback, loadParcelTerrain, loadSurroundings } from "@/store/lotSlice";
@@ -50,6 +50,14 @@ export default function Toolbar() {
         title="Show only the selected parcel's 3D terrain and boundary, with endpoint elevations"
       >
         <Mountain /> Parcel 3D
+      </Button>
+      <Button
+        size="sm"
+        variant={viewMode === "house3d" ? "default" : "outline"}
+        onClick={() => dispatch(setViewMode("house3d"))}
+        title="Open the Three.js parametric house modelling workspace"
+      >
+        <House /> House Generator
       </Button>
       <div className="mx-2 h-5 w-px bg-border" />
       <Button size="sm" variant="ghost" disabled={!selected || viewMode !== "2d"} onClick={() => dispatch(fitToLot())}>
