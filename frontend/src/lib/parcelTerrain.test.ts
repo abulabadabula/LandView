@@ -59,19 +59,34 @@ describe("buildParcelTerrainMesh", () => {
     const mesh = buildParcelTerrainMesh(parcel, terrain);
     expect(mesh.boundary).toHaveLength(4);
     expect(mesh.boundary.every((point) => Number.isFinite(point.elevationM))).toBe(true);
+    expect(mesh.boundary[0].horizontalDistanceToNextM).toBeCloseTo(Math.sqrt(500), 2);
+    expect(mesh.boundary[3].horizontalDistanceToNextM).toBeCloseTo(Math.sqrt(500), 2);
     expect(mesh.vertices.length).toBeGreaterThan(0);
     expect(mesh.indices.length).toBeGreaterThan(0);
     expect(mesh.indices.length % 3).toBe(0);
     expect(Math.max(...mesh.indices)).toBeLessThan(mesh.vertices.length);
     expect(mesh.gridSpacingM).toBe(25);
+
+    // The clipped perimeter should include points on each exact parcel edge,
+    // not stop at the nearest whole DEM cell.
+    const localVertices = mesh.vertices.map((vertex) => ({
+      east: (vertex.lon - centerLon) * 111_320 * Math.cos((centerLat * Math.PI) / 180),
+      north: (vertex.lat - centerLat) * 111_320,
+    }));
+    expect(Math.min(...localVertices.map((point) => point.east))).toBeCloseTo(-40, 2);
+    expect(Math.max(...localVertices.map((point) => point.east))).toBeCloseTo(40, 2);
+    expect(Math.min(...localVertices.map((point) => point.north))).toBeCloseTo(-40, 2);
+    expect(Math.max(...localVertices.map((point) => point.north))).toBeCloseTo(40, 2);
   });
 
   it("exports parcel area, endpoint elevations and an indexed terrain mesh", () => {
     const mesh = buildParcelTerrainMesh(parcel, terrain);
     const output = parcelTerrainExport(address, parcel, terrain, mesh);
-    expect(output.schemaVersion).toBe("landview.parcel-terrain.v1");
+    expect(output.schemaVersion).toBe("landview.parcel-terrain.v2");
     expect(output.parcel.areaM2).toBe(6400);
     expect(output.parcel.boundaryEndpoints).toHaveLength(4);
+    expect(output.parcel.boundarySegments).toHaveLength(4);
+    expect(output.parcel.boundarySegments[0].horizontalDistanceM).toBeCloseTo(Math.sqrt(500), 2);
     expect(output.terrain.triangles.length).toBe(mesh.indices.length / 3);
     expect(output.terrain.source).toBe("test DEM");
   });

@@ -193,7 +193,10 @@ export default function ParcelTerrainView() {
       });
     }
 
-    for (const point of mesh.boundary) {
+    for (let index = 0; index < mesh.boundary.length; index += 1) {
+      const point = mesh.boundary[index];
+      const next = mesh.boundary[(index + 1) % mesh.boundary.length];
+
       viewer.entities.add({
         name: "Boundary point " + point.index,
         position: Cartesian3.fromDegrees(point.lon, point.lat, point.elevationM + 0.15),
@@ -212,6 +215,29 @@ export default function ParcelTerrainView() {
           outlineWidth: 3,
           style: LabelStyle.FILL_AND_OUTLINE,
           pixelOffset: new Cartesian2(0, -15),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+
+      // Place the horizontal plan length near the middle of each boundary edge.
+      viewer.entities.add({
+        name: "Boundary distance P" + point.index + " to P" + next.index,
+        position: Cartesian3.fromDegrees(
+          (point.lon + next.lon) / 2,
+          (point.lat + next.lat) / 2,
+          (point.elevationM + next.elevationM) / 2 + 0.3,
+        ),
+        label: {
+          text: point.horizontalDistanceToNextM.toFixed(2) + " m",
+          font: "bold 13px sans-serif",
+          fillColor: Color.WHITE,
+          outlineColor: Color.fromCssColorString("#17252d"),
+          outlineWidth: 3,
+          style: LabelStyle.FILL_AND_OUTLINE,
+          showBackground: true,
+          backgroundColor: Color.fromCssColorString("#17252d").withAlpha(0.82),
+          backgroundPadding: new Cartesian2(5, 3),
+          pixelOffset: new Cartesian2(0, -10),
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -278,18 +304,19 @@ export default function ParcelTerrainView() {
       </div>
 
       <div className="pointer-events-auto absolute right-3 top-3 z-10 w-64 max-w-[48%] rounded-md border border-slate-300/70 bg-slate-950/85 p-2 text-xs text-white shadow-lg">
-        <div className="mb-2 font-semibold">Boundary endpoint elevations</div>
+        <div className="mb-2 font-semibold">Boundary elevations &amp; horizontal distances</div>
         <div className="max-h-64 overflow-auto">
           {mesh?.boundary.length ? (
             <table className="w-full tabular-nums">
               <thead className="sticky top-0 bg-slate-800 text-left">
-                <tr><th className="px-1 py-1">Point</th><th className="px-1 py-1 text-right">Elevation</th></tr>
+                <tr><th className="px-1 py-1">Point</th><th className="px-1 py-1 text-right">Elev. (m)</th><th className="px-1 py-1 text-right">To next (m)</th></tr>
               </thead>
               <tbody>
                 {mesh.boundary.map((point) => (
                   <tr key={point.index} className="border-t border-white/10">
                     <td className="px-1 py-1">P{point.index}</td>
-                    <td className="px-1 py-1 text-right">{fmt(point.elevationM, 2)} m</td>
+                    <td className="px-1 py-1 text-right">{fmt(point.elevationM, 2)}</td>
+                    <td className="px-1 py-1 text-right">{fmt(point.horizontalDistanceToNextM, 2)}</td>
                   </tr>
                 ))}
               </tbody>
