@@ -21,7 +21,6 @@ import { useAppDispatch, useAppSelector } from "@/store";
 import { loadParcelSetback, loadParcelTerrain } from "@/store/lotSlice";
 import { sampleElevation, toLocal } from "@/lib/geo";
 import { buildParcelTerrainMesh } from "@/lib/parcelTerrain";
-import type { ParcelTerrainMesh } from "@/lib/parcelTerrain";
 
 type RoofStyle = "Gable roof" | "Hip roof" | "Flat roof" | "Mono-pitch roof" | "Mixed roof";
 type GarageStyle = "No garage" | "Single garage" | "Double garage" | "Carport";
@@ -272,7 +271,6 @@ function buildParametricHouse(
   const garageCenterZ = garageDepth > 0 ? garageFrontZ - garageDepth / 2 : 0;
   const rearExtent = Math.max(mainDepth / 2, garageCenterZ + garageDepth / 2);
   const frontExtent = Math.max(mainDepth / 2, garageCenterZ - garageDepth / 2);
-  const maximumAbsZ = Math.max(Math.abs(rearExtent), Math.abs(frontExtent));
   const terrainAt = groundYAt ?? ((_east: number, north: number) => -slope * north);
   const minX = -mainWidth / 2 - (params.showGarage && params.garage !== "No garage" ? garageDimensions.width : 0);
   const maxX = mainWidth / 2;
@@ -636,7 +634,7 @@ export default function HouseGeneratorView() {
         terrainCentreAtAnchor.north - northM,
       ) - baseElevationM;
 
-      const boundaryPositions: THREE.Vector3[] = [];
+      const boundaryPositions: any[] = [];
       for (const point of parcelMesh.boundary) {
         const local = toScenePoint(point.lon, point.lat);
         const groundY = point.elevationM - baseElevationM + 0.06;
