@@ -9,6 +9,7 @@ import MapView from "@/components/map/MapView";
 import { useAppSelector } from "@/store";
 
 const CesiumView = lazy(() => import("@/components/cesium/CesiumView"));
+const ParcelTerrainView = lazy(() => import("@/components/cesium/ParcelTerrainView"));
 
 export default function App() {
   const viewMode = useAppSelector((s) => s.ui.viewMode);
@@ -22,6 +23,8 @@ export default function App() {
         <ResizablePanel id="center" order={2} minSize={30}>
           {viewMode === "2d" ? (
             <MapView />
+          ) : viewMode === "parcel3d" ? (
+            <Suspense fallback={null}><ParcelTerrainView /></Suspense>
           ) : (
             <Suspense fallback={null}><CesiumView /></Suspense>
           )}

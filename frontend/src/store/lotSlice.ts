@@ -1,5 +1,6 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import { api } from "@/lib/api";
+import { toLocal } from "@/lib/geo";
 import type {
   AddressResult,
   BuildingCollection,
@@ -16,6 +17,8 @@ interface LotState {
   parcel: Parcel | null;
   env: Environment | null;
   terrain: TerrainGrid | null;
+  parcelTerrain: TerrainGrid | null;
+  parcelTerrainLoading: boolean;
   buildings: BuildingCollection | null;
   context: ContextCollection | null;
   status: "idle" | "loading" | "ready" | "error";
@@ -30,6 +33,8 @@ const initialState: LotState = {
   parcel: null,
   env: null,
   terrain: null,
+  parcelTerrain: null,
+  parcelTerrainLoading: false,
   buildings: null,
   context: null,
   status: "idle",
@@ -64,6 +69,25 @@ export const loadSurroundings = createAsyncThunk(
   },
 );
 
+export const loadParcelTerrain = createAsyncThunk(
+  "lot/loadParcelTerrain",
+  async ({ address, parcel }: { address: AddressResult; parcel: Parcel }) => {
+    // Size the local elevation request to include the parcel plus a small margin.
+    const offsets = parcel.boundary.map((point) =>
+      toLocal(point.lon, point.lat, address.lon, address.lat),
+    );
+    const maxOffset = offsets.reduce(
+      (max, point) => Math.max(max, Math.abs(point.east), Math.abs(point.north)),
+      0,
+    );
+    const sizeM = Math.min(
+      2000,
+      Math.max(200, Math.ceil(((maxOffset + 10) * 2) / 25) * 25),
+    );
+    return api.getTerrain(address.lat, address.lon, sizeM, 129);
+  },
+);
+
 const lotSlice = createSlice({
   name: "lot",
   initialState,
@@ -85,6 +109,8 @@ const lotSlice = createSlice({
       s.surroundingsLoading = true;
       s.error = null;
       s.selected = a.meta.arg;
+      s.parcelTerrain = null;
+      s.parcelTerrainLoading = false;
       s.results = [];
     });
     b.addCase(loadLot.fulfilled, (s, a) => {
@@ -115,6 +141,18 @@ const lotSlice = createSlice({
     b.addCase(loadSurroundings.rejected, (s, a) => {
       s.surroundingsLoading = false;
       s.error = a.error.message ?? "Failed to load surroundings";
+    });
+    b.addCase(loadParcelTerrain.pending, (s) => {
+      s.parcelTerrainLoading = true;
+      s.error = null;
+    });
+    b.addCase(loadParcelTerrain.fulfilled, (s, a) => {
+      s.parcelTerrainLoading = false;
+      s.parcelTerrain = a.payload;
+    });
+    b.addCase(loadParcelTerrain.rejected, (s, a) => {
+      s.parcelTerrainLoading = false;
+      s.error = a.error.message ?? "Failed to load parcel terrain";
     });
   },
 });

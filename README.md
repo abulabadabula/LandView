@@ -12,7 +12,7 @@ Search a New Zealand address, inspect its parcel and environmental context, and 
 
 The application has a header and toolbar, with resizable left/right information panels surrounding the main canvas.
 The left panel lists the selected lot, boundary points, topography and environmental information.
-The toolbar includes a **100 m 3D model** button. It loads a 200 m × 200 m square centred on the selected address (100 m from the centre in each cardinal direction), using a denser terrain grid and optional LiDAR DSM/DEM building-height estimates. The right panel controls the basemap and 3D scene, including vertical exaggeration, visible layers, and context coverage width (200 m square to 3 km). Changing the coverage reloads terrain and nearby features around the selected address.
+The toolbar includes a **100 m 3D model** button. It loads a 200 m × 200 m square centred on the selected address (100 m from the centre in each cardinal direction), using a denser terrain grid and optional LiDAR DSM/DEM building-height estimates. The **Parcel 3D** button opens an isolated, rotatable terrain mesh for the selected parcel, labels each boundary endpoint with its interpolated elevation, reports parcel area and terrain elevation range, and downloads the displayed mesh plus boundary metadata as JSON. The right panel controls the basemap and 3D scene, including vertical exaggeration, visible layers, and context coverage width (200 m square to 3 km). Changing the coverage reloads terrain and nearby features around the selected address.
 
 ## Environment parameters
 
@@ -70,6 +70,12 @@ The 3D view uses CesiumJS in 3D globe mode. Drag the left mouse button to rotate
 The context width can be changed from 500 m to 3 km. The scene re-frames for the newly loaded coverage, but changing layer toggles or vertical exaggeration does not reset the chosen camera view.
 
 Cesium workers and assets are served from `/cesium` (see `frontend/vite.config.ts`).
+
+## Parcel-only 3D terrain and JSON export
+
+Parcel 3D uses the selected parcel's LINZ boundary and a local elevation grid to construct a triangle mesh clipped approximately to the parcel footprint. The view does not render surrounding buildings, roads, waterways or map imagery. Drag with the left mouse button to rotate, right-drag to tilt, and use the wheel to zoom. Boundary endpoint elevations are bilinearly interpolated from the downloaded grid. The JSON export includes the parcel metadata and area, endpoint coordinates/elevations, terrain source and sample spacing, mesh vertices (longitude, latitude and elevation in metres), and triangle indices.
+
+The mesh is intended for visualisation and early-stage site context, not survey, setting-out, earthworks quantities or engineering design. Mesh cells are selected by their centre relative to the parcel polygon, so the rendered surface edge can differ from the legal boundary by up to approximately one terrain-grid cell. When LINZ LiDAR elevation tiles are not configured or available, the backend falls back to a coarser elevation source/grid; check the exported source and spacing before using the data.
 
 ## Data limitations and attribution
 
