@@ -11,7 +11,6 @@ import {
   EllipsoidTerrainProvider,
   Geometry,
   GeometryAttribute,
-  GeometryAttributes,
   GeometryInstance,
   HeadingPitchRange,
   LabelStyle,
@@ -142,7 +141,7 @@ export default function ParcelTerrainView() {
     }
 
     const geometry = new Geometry({
-      attributes: new GeometryAttributes({
+      attributes: {
         position: new GeometryAttribute({
           componentDatatype: ComponentDatatype.DOUBLE,
           componentsPerAttribute: 3,
@@ -153,7 +152,7 @@ export default function ParcelTerrainView() {
           componentsPerAttribute: 3,
           values: normalValues,
         }),
-      }),
+      },
       indices: new Uint32Array(mesh.indices),
       primitiveType: PrimitiveType.TRIANGLES,
       boundingSphere: BoundingSphere.fromVertices(positionValues),
