@@ -13,6 +13,25 @@ export interface AddressResult { id: number; fullAddress: string; lat: number; l
 
 export interface BoundaryPoint { index: number; lon: number; lat: number; nztmE: number; nztmN: number }
 
+export interface ParcelSetbackPoint {
+  index: number;
+  lon: number;
+  lat: number;
+  nztmE: number;
+  nztmN: number;
+}
+
+export interface ParcelSetbackPolygon {
+  points: ParcelSetbackPoint[];
+  areaM2: number;
+}
+
+export interface ParcelSetbackResult {
+  distanceM: number;
+  polygons: ParcelSetbackPolygon[];
+  warning: string | null;
+}
+
 export interface Parcel {
   id: number | null;
   appellation: string | null;
