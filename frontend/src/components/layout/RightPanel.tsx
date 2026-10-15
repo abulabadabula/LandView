@@ -49,6 +49,24 @@ export default function RightPanel() {
 
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4 text-sm">
+      {viewMode === "parcel3d" ? (
+        <div>
+          <h3 className="mb-2 font-semibold">Parcel-only 3D model</h3>
+          <p className="text-muted-foreground">
+            This view isolates the selected parcel terrain and boundary. Surrounding buildings,
+            roads, waterways and map imagery are hidden.
+          </p>
+          <p className="mt-3 text-muted-foreground">
+            Parcel area and boundary endpoint elevations are shown over the model. Use
+            “Download terrain JSON” in the upper-right of the view to export the terrain mesh.
+          </p>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Elevations and mesh resolution depend on available LINZ LiDAR coverage or the fallback
+            elevation source. This model is for visualisation, not surveying or engineering design.
+          </p>
+        </div>
+      ) : (
+        <>
       <div>
         <h3 className="mb-2 font-semibold">Basemap</h3>
         <div className="space-y-1.5">
@@ -161,6 +179,8 @@ export default function RightPanel() {
 
       {!buildings && status === "ready" && (
         <p className="text-xs text-muted-foreground">Building footprints could not be loaded.</p>
+      )}
+        </>
       )}
     </div>
   );
