@@ -81,13 +81,29 @@ describe("buildParcelTerrainMesh", () => {
 
   it("exports parcel area, endpoint elevations and an indexed terrain mesh", () => {
     const mesh = buildParcelTerrainMesh(parcel, terrain);
-    const output = parcelTerrainExport(address, parcel, terrain, mesh);
-    expect(output.schemaVersion).toBe("landview.parcel-terrain.v2");
+    const setback = {
+      distanceM: 1,
+      warning: null,
+      polygons: [{
+        areaM2: 6084,
+        points: [{
+          index: 1,
+          lon: coords[0].lon,
+          lat: coords[0].lat,
+          nztmE: 1_750_001,
+          nztmN: 5_920_001,
+        }],
+      }],
+    };
+    const output = parcelTerrainExport(address, parcel, terrain, mesh, setback);
+    expect(output.schemaVersion).toBe("landview.parcel-terrain.v3");
     expect(output.parcel.areaM2).toBe(6400);
     expect(output.parcel.boundaryEndpoints).toHaveLength(4);
     expect(output.parcel.boundarySegments).toHaveLength(4);
     expect(output.parcel.boundarySegments[0].horizontalDistanceM).toBeCloseTo(Math.sqrt(500), 2);
     expect(output.terrain.triangles.length).toBe(mesh.indices.length / 3);
     expect(output.terrain.source).toBe("test DEM");
+    expect(output.setback?.distanceM).toBe(1);
+    expect(output.setback?.polygons[0].controlPoints[0].nztmE).toBe(1_750_001);
   });
 });
