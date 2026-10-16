@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Query
 
+from app.agents.contracts import HouseDesignChatRequest, HouseDesignChatResponse
+from app.agents.orchestrator import run_house_design_chat
+from app.config import get_settings
 from app.schemas import (
     AddressResult,
     BuildingCollection,
@@ -61,6 +64,12 @@ async def validate_house_design_spec(spec: HouseDesignSpec):
 async def house_design_constraints_validate(request: HouseDesignValidationRequest):
     """Check a supplied candidate against supplied site geometry and rule data."""
     return validate_house_design(request)
+
+
+@router.post("/house-design/agent/chat", response_model=HouseDesignChatResponse, response_model_exclude_none=True)
+async def house_design_agent_chat(request: HouseDesignChatRequest):
+    """Run the house-design chat workflow; this endpoint does not issue compliance Pass/Fail."""
+    return await run_house_design_chat(request, get_settings())
 
 
 @router.get("/environment", response_model=Environment)

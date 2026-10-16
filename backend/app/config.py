@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     http_timeout: float = 20.0
 
+    # Optional language/intent layer; compliance decisions remain deterministic.
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
