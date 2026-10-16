@@ -814,7 +814,7 @@ export default function HouseGeneratorView() {
         role: "assistant",
         content: response.assistantMessage,
         createdAt: new Date().toISOString(),
-        meta: "Workflow: " + response.workflowStage + " · Compliance: " + response.auditStatus,
+        meta: "Provider: " + response.provider + " · Workflow: " + response.workflowStage + " · Compliance: " + response.auditStatus,
       });
     } catch (error) {
       setChatError(error instanceof Error ? error.message : "The chat request failed.");
