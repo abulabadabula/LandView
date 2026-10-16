@@ -88,7 +88,11 @@ This is a deterministic early-stage 3D massing preview, not an AI-generated hous
 
 The AI House Generator design brief is defined in [the JSON Schema](docs/schemas/HouseDesignSpec.schema.json) with a [design-input example](docs/examples/house-design-input.example.json). The example requests a two-storey contemporary house, four bedrooms, 200 m² target GFA, gable roof, double garage and terrain adaptation; it is input data only, not a generated house model. See [the design and validation contract](docs/house-design-generator.md) for deterministic parametric geometry rules, coordinate conventions, validation states and API contracts.
 
-Current endpoints: GET /api/house-design/spec/schema, POST /api/house-design/spec/validate and POST /api/house-design/constraints/validate. The constraint endpoint validates a supplied candidate; AI provider integration and parametric house mesh generation are not yet implemented.
+Current endpoints: GET /api/house-design/spec/schema, POST /api/house-design/spec/validate, POST /api/house-design/constraints/validate and POST /api/house-design/agent/chat. The House Generator chat supports multiple saved conversations, restores them after refresh, and stores their message history in this browser's local storage. Recognised design preferences update the live inputs; each conversation retains a lightweight blackboard version.
+
+Configure `OPENAI_API_KEY` in `backend/.env` to enable optional LLM-assisted natural-language interpretation; `OPENAI_MODEL` and `OPENAI_BASE_URL` are optional overrides. Without a key, basic English/Chinese design preferences are interpreted deterministically. The API key stays server-side.
+
+**Important boundary:** the chat does not yet calculate the 3D Legal Envelope, run a complete planner-confirmed Auckland rule pack, solve room layouts, or determine resource-consent status. Chat responses always label planning compliance `NOT_EVALUATED`. Use the deterministic supplied-candidate validation endpoint only for checks it explicitly implements; no chat response is a consenting or construction design.
 
 ## Data limitations and attribution
 

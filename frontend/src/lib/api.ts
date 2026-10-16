@@ -10,6 +10,45 @@ import type {
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
+export interface HouseDesignChatCurrentDesign {
+  storeys: number;
+  bedrooms: number;
+  grossFloorAreaTargetM2: number;
+  style: string;
+  roof: "Gable roof" | "Hip roof" | "Flat roof" | "Mono-pitch roof" | "Mixed roof";
+  garage: "No garage" | "Single garage" | "Double garage" | "Carport";
+  terrainAdaptation: "Adapt to terrain" | "Level pad" | "Stepped floor plates";
+}
+export interface HouseDesignChatRequest {
+  conversationId: string;
+  message: string;
+  history: Array<{ role: "user" | "assistant"; content: string }>;
+  blackboardVersion: number;
+  currentDesign: HouseDesignChatCurrentDesign;
+  siteContext: { address?: string; parcelLoaded: boolean; siteDataConfidence?: string };
+}
+export interface HouseDesignIntentPatch {
+  storeys?: number;
+  bedrooms?: number;
+  grossFloorAreaTargetM2?: number;
+  style?: string;
+  roof?: HouseDesignChatCurrentDesign["roof"];
+  garage?: HouseDesignChatCurrentDesign["garage"];
+  terrainAdaptation?: HouseDesignChatCurrentDesign["terrainAdaptation"];
+}
+export interface HouseDesignChatResponse {
+  conversationId: string;
+  assistantMessage: string;
+  intentPatch: HouseDesignIntentPatch;
+  workflowStage: string;
+  auditStatus: "NOT_EVALUATED";
+  auditReason: string;
+  agentTrace: Array<{ agent: string; status: string; summary: string }>;
+  provider: string;
+  blackboardVersion: number;
+}
+
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
@@ -36,6 +75,7 @@ async function get<T>(path: string, params: Record<string, string | number> = {}
 }
 
 export const api = {
+  chatHouseDesign: (payload: HouseDesignChatRequest) => post<HouseDesignChatResponse>("/house-design/agent/chat", payload),
   searchAddresses: (q: string) => get<AddressResult[]>("/address/search", { q }),
   getLot: (lat: number, lon: number) => get<Parcel | null>("/lot", { lat, lon }),
   getParcelSetback: (boundary: Parcel["boundary"], distanceM = 1) =>

@@ -7,6 +7,13 @@ import {
   EyeOff,
   House,
   Info,
+  LoaderCircle,
+  MessageCircle,
+  Plus,
+  Send,
+  Trash2,
+  UserRound,
+  Bot,
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
@@ -21,11 +28,49 @@ import { useAppDispatch, useAppSelector } from "@/store";
 import { loadParcelSetback, loadParcelTerrain } from "@/store/lotSlice";
 import { sampleElevation, toLocal } from "@/lib/geo";
 import { buildParcelTerrainMesh } from "@/lib/parcelTerrain";
+import { api } from "@/lib/api";
 
 type RoofStyle = "Gable roof" | "Hip roof" | "Flat roof" | "Mono-pitch roof" | "Mixed roof";
 type GarageStyle = "No garage" | "Single garage" | "Double garage" | "Carport";
 type TerrainMode = "Adapt to terrain" | "Level pad" | "Stepped floor plates";
 type GfaBasis = "Undecided" | "Includes garage" | "Excludes garage";
+
+type ChatRole = "user" | "assistant";
+interface HouseChatMessage { id: string; role: ChatRole; content: string; createdAt: string; meta?: string; }
+interface HouseChatSession { id: string; title: string; updatedAt: string; blackboardVersion: number; messages: HouseChatMessage[]; }
+interface HouseChatStore { sessions: HouseChatSession[]; activeId: string; }
+const HOUSE_CHAT_STORAGE_KEY = "landview:house-generator:chat:v1";
+const HOUSE_CHAT_WELCOME = "Describe the house you have in mind. I can translate preferences such as storeys, bedrooms, target floor area, roof, garage and terrain adaptation into editable design inputs. Planning compliance is not assessed by this conversation.";
+
+function createChatId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return "chat-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+function createHouseChatSession(): HouseChatSession {
+  const now = new Date().toISOString();
+  return {
+    id: createChatId(), title: "New design conversation", updatedAt: now, blackboardVersion: 0,
+    messages: [{ id: createChatId(), role: "assistant", content: HOUSE_CHAT_WELCOME, createdAt: now }],
+  };
+}
+function loadHouseChatStore(): HouseChatStore {
+  if (typeof window === "undefined") return { sessions: [], activeId: "" };
+  try {
+    const raw = window.localStorage.getItem(HOUSE_CHAT_STORAGE_KEY);
+    if (!raw) return { sessions: [], activeId: "" };
+    const parsed = JSON.parse(raw) as Partial<HouseChatStore>;
+    const sessions = Array.isArray(parsed.sessions)
+      ? parsed.sessions
+          .filter((item): item is HouseChatSession => !!item && typeof item.id === "string" && typeof item.title === "string" && Array.isArray(item.messages))
+          .map((item) => ({ ...item, blackboardVersion: Number.isFinite(item.blackboardVersion) ? item.blackboardVersion : 0 }))
+      : [];
+    const activeId = sessions.some((item) => item.id === parsed.activeId) ? String(parsed.activeId) : sessions[0]?.id ?? "";
+    return { sessions, activeId };
+  } catch {
+    return { sessions: [], activeId: "" };
+  }
+}
+
 
 interface HouseParameters {
   storeys: number;
@@ -616,6 +661,16 @@ export default function HouseGeneratorView() {
   const setbackRootRef = useRef<any>(null);
   const planRootRef = useRef<any>(null);
   const [params, setParams] = useState<HouseParameters>(INITIAL_PARAMETERS);
+  const [chatStore, setChatStore] = useState<HouseChatStore>(() => {
+    const saved = loadHouseChatStore();
+    if (saved.sessions.length > 0) return saved;
+    const session = createHouseChatSession();
+    return { sessions: [session], activeId: session.id };
+  });
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
   const [metrics, setMetrics] = useState<MassingMetrics | null>(null);
   const [generation, setGeneration] = useState(0);
   const [webglError, setWebglError] = useState<string | null>(null);
@@ -637,6 +692,16 @@ export default function HouseGeneratorView() {
   } = useAppSelector((s) => s.lot);
 
   const siteReady = lotStatus === "ready" && !!selectedAddress && !!parcel && !!parcelTerrain;
+  const activeChat = chatStore.sessions.find((session) => session.id === chatStore.activeId) ?? chatStore.sessions[0] ?? null;
+
+  useEffect(() => {
+    try { window.localStorage.setItem(HOUSE_CHAT_STORAGE_KEY, JSON.stringify(chatStore)); }
+    catch { /* Keep the current page usable if browser storage is unavailable. */ }
+  }, [chatStore]);
+
+  useEffect(() => {
+    if (chatMessagesRef.current) chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+  }, [activeChat?.id, activeChat?.messages.length, chatSending]);
   const parcelMesh = useMemo(
     () => siteReady && parcel && parcelTerrain ? buildParcelTerrainMesh(parcel, parcelTerrain) : null,
     [siteReady, parcel, parcelTerrain],
@@ -663,6 +728,100 @@ export default function HouseGeneratorView() {
     parcelTerrain, parcelTerrainLoading, parcelTerrainError,
     parcelSetback, parcelSetbackLoading, parcelSetbackError,
   ]);
+
+  const startNewConversation = () => {
+    const session = createHouseChatSession();
+    setChatStore((current) => ({ sessions: [session, ...current.sessions], activeId: session.id }));
+    setChatDraft("");
+    setChatError(null);
+  };
+
+  const deleteActiveConversation = () => {
+    if (!activeChat) return;
+    const remaining = chatStore.sessions.filter((session) => session.id !== activeChat.id);
+    if (remaining.length > 0) setChatStore({ sessions: remaining, activeId: remaining[0].id });
+    else {
+      const session = createHouseChatSession();
+      setChatStore({ sessions: [session], activeId: session.id });
+    }
+    setChatDraft("");
+    setChatError(null);
+  };
+
+  const appendChatMessage = (sessionId: string, message: HouseChatMessage, title?: string) => {
+    setChatStore((current) => ({
+      ...current,
+      sessions: current.sessions.map((session) => session.id === sessionId
+        ? { ...session, title: title ?? session.title, updatedAt: message.createdAt, messages: [...session.messages, message] }
+        : session),
+    }));
+  };
+
+  const sendChatMessage = async () => {
+    const content = chatDraft.trim();
+    if (!content || chatSending) return;
+    const conversation = activeChat ?? createHouseChatSession();
+    const conversationId = conversation.id;
+    const title = conversation.messages.filter((item) => item.role === "user").length === 0
+      ? (content.length > 42 ? content.slice(0, 39) + "…" : content)
+      : conversation.title;
+    const userMessage: HouseChatMessage = { id: createChatId(), role: "user", content, createdAt: new Date().toISOString() };
+    if (!activeChat) setChatStore({ sessions: [conversation], activeId: conversationId });
+    appendChatMessage(conversationId, userMessage, title);
+    setChatDraft("");
+    setChatError(null);
+    setChatSending(true);
+    try {
+      const response = await api.chatHouseDesign({
+        conversationId,
+        message: content,
+        history: conversation.messages.slice(-12).map(({ role, content: messageContent }) => ({ role, content: messageContent })),
+        blackboardVersion: conversation.blackboardVersion,
+        currentDesign: {
+          storeys: params.storeys,
+          bedrooms: params.bedrooms,
+          grossFloorAreaTargetM2: params.grossFloorAreaTargetM2,
+          style: params.style,
+          roof: params.roof,
+          garage: params.garage,
+          terrainAdaptation: params.terrainAdaptation,
+        },
+        siteContext: {
+          address: selectedAddress?.fullAddress,
+          parcelLoaded: siteReady,
+          siteDataConfidence: siteReady && parcelTerrain ? parcelTerrain.source : "not-loaded",
+        },
+      });
+      const patch = response.intentPatch ?? {};
+      setParams((current) => ({
+        ...current,
+        ...(patch.storeys !== undefined ? { storeys: clampInteger(String(patch.storeys), 1, 4) } : {}),
+        ...(patch.bedrooms !== undefined ? { bedrooms: clampInteger(String(patch.bedrooms), 1, 10) } : {}),
+        ...(patch.grossFloorAreaTargetM2 !== undefined ? { grossFloorAreaTargetM2: clampNumber(String(patch.grossFloorAreaTargetM2), 20, 2000) } : {}),
+        ...(patch.style !== undefined ? { style: patch.style } : {}),
+        ...(patch.roof !== undefined ? { roof: patch.roof as RoofStyle } : {}),
+        ...(patch.garage !== undefined ? { garage: patch.garage as GarageStyle } : {}),
+        ...(patch.terrainAdaptation !== undefined ? { terrainAdaptation: patch.terrainAdaptation as TerrainMode } : {}),
+      }));
+      setChatStore((current) => ({
+        ...current,
+        sessions: current.sessions.map((session) => session.id === conversationId
+          ? { ...session, blackboardVersion: response.blackboardVersion }
+          : session),
+      }));
+      appendChatMessage(conversationId, {
+        id: createChatId(),
+        role: "assistant",
+        content: response.assistantMessage,
+        createdAt: new Date().toISOString(),
+        meta: "Workflow: " + response.workflowStage + " · Compliance: " + response.auditStatus,
+      });
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : "The chat request failed.");
+    } finally {
+      setChatSending(false);
+    }
+  };
 
   const update = <K extends keyof HouseParameters>(key: K, value: HouseParameters[K]) => {
     setParams((current) => ({ ...current, [key]: value }));
@@ -1359,6 +1518,49 @@ export default function HouseGeneratorView() {
             </div>
           ) : null}
         </section>
+
+        <aside className="flex max-h-[42vh] w-full shrink-0 flex-col border-t bg-card lg:max-h-none lg:w-[320px] lg:border-l lg:border-t-0 xl:w-[350px]">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <MessageCircle className="size-4 shrink-0 text-primary" />
+              <div className="min-w-0"><h2 className="text-sm font-semibold">Design conversation</h2><p className="text-[10px] text-muted-foreground">Agent-assisted inputs · saved locally</p></div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button type="button" title="Start a new conversation" aria-label="Start a new conversation" onClick={startNewConversation} disabled={chatSending} className="rounded-md p-2 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"><Plus className="size-4" /></button>
+              <button type="button" title="Delete this conversation" aria-label="Delete this conversation" onClick={deleteActiveConversation} disabled={chatSending || !activeChat} className="rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"><Trash2 className="size-4" /></button>
+            </div>
+          </div>
+          <div className="shrink-0 border-b px-3 py-2">
+            <div className="mb-1.5 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><span>Conversation history</span><span>{chatStore.sessions.length} saved</span></div>
+            <div className="max-h-24 space-y-1 overflow-y-auto">
+              {[...chatStore.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((session) => (
+                <button key={session.id} type="button" onClick={() => { setChatStore((current) => ({ ...current, activeId: session.id })); setChatError(null); }} disabled={chatSending} className={"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors disabled:opacity-50 " + (session.id === activeChat?.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary")}>
+                  <MessageCircle className="size-3 shrink-0" /><span className="min-w-0 flex-1 truncate">{session.title}</span><span className="shrink-0 text-[9px]">{new Date(session.updatedAt).toLocaleDateString("en-NZ")}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div ref={chatMessagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+            {(activeChat?.messages ?? []).map((message) => (
+              <div key={message.id} className={"flex items-start gap-2 " + (message.role === "user" ? "flex-row-reverse" : "")}>
+                <div className={"mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full " + (message.role === "user" ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground")}>{message.role === "user" ? <UserRound className="size-3.5" /> : <Bot className="size-3.5" />}</div>
+                <div className={"min-w-0 max-w-[88%] rounded-lg px-3 py-2 " + (message.role === "user" ? "bg-primary text-primary-foreground" : "border bg-background text-foreground")}>
+                  <p className="whitespace-pre-wrap break-words text-xs leading-5">{message.content}</p>
+                  {message.meta ? <p className="mt-1.5 border-t border-current/15 pt-1.5 text-[9px] opacity-70">{message.meta}</p> : null}
+                  <p className="mt-1 text-right text-[9px] opacity-55">{new Date(message.createdAt).toLocaleTimeString("en-NZ", { hour: "2-digit", minute: "2-digit" })}</p>
+                </div>
+              </div>
+            ))}
+            {chatSending ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="size-4 animate-spin" /> Parsing design intent and preparing a structured proposal…</div> : null}
+          </div>
+          {chatError ? <div role="alert" className="mx-3 mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive">Could not reach the house-design agent: {chatError}</div> : null}
+          <form className="shrink-0 border-t p-3" onSubmit={(event) => { event.preventDefault(); void sendChatMessage(); }}>
+            <label htmlFor="house-design-chat-input" className="sr-only">Describe the house you want</label>
+            <textarea id="house-design-chat-input" value={chatDraft} onChange={(event) => setChatDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendChatMessage(); } }} rows={3} maxLength={4000} placeholder="e.g. 两层、4卧室、200 m²、双车库，不要错层…" disabled={chatSending} className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" />
+            <div className="mt-2 flex items-center justify-between gap-2"><span className="text-[9px] text-muted-foreground">Enter to send · Shift+Enter for a new line</span><button type="submit" disabled={chatSending || !chatDraft.trim()} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">{chatSending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />} Send</button></div>
+            <p className="mt-2 text-[9px] leading-4 text-muted-foreground">History stays in this browser's local storage. A chat response is not a planning-compliance determination.</p>
+          </form>
+        </aside>
       </div>
 
       <div className="flex shrink-0 flex-col gap-2 border-t bg-card px-4 py-2 md:flex-row md:items-center md:justify-between">
