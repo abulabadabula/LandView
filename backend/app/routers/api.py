@@ -24,7 +24,6 @@ from app.services import context as context_service
 from app.services import environment, linz
 from app.services import setback as setback_service
 from app.services.house_design_validation import validate_house_design
-
 from landview_core.rules import (
     RulePackError,
     RulePackEvaluationRequest,
