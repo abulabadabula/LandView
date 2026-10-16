@@ -538,7 +538,7 @@ function addPlanFootprint(
 
 
 function addLegalEnvelopeSolid(
-  parent: THREE.Group,
+  parent: any,
   envelope: LegalEnvelopeGeometry,
   conditionsMarkedConfirmed: boolean,
   polygonIndex: number,
@@ -629,7 +629,7 @@ function addLegalEnvelopeSolid(
 }
 
 function addLegalEnvelopePlan(
-  parent: THREE.Group,
+  parent: any,
   footprint: LegalEnvelopePoint[],
   elevation: number,
   conditionsMarkedConfirmed: boolean,
