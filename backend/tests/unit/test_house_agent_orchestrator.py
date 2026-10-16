@@ -1,8 +1,8 @@
-from app.agents.contracts import HouseDesignChatRequest
-from app.agents.intent_parser import parse_design_intent
 import httpx
 import respx
 
+from app.agents.contracts import HouseDesignChatRequest
+from app.agents.intent_parser import parse_design_intent
 from app.agents.llm_agent import ask_llm_for_intent
 from app.agents.orchestrator import run_house_design_chat
 from app.config import Settings
