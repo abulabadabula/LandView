@@ -41,6 +41,7 @@ interface HouseParameters {
   showRoof: boolean;
   showWindows: boolean;
   showTerrain: boolean;
+  showContours: boolean;
   showGarage: boolean;
   showBoundary: boolean;
   showSetback: boolean;
@@ -70,6 +71,7 @@ const INITIAL_PARAMETERS: HouseParameters = {
   showRoof: true,
   showWindows: true,
   showTerrain: true,
+  showContours: true,
   showGarage: true,
   showBoundary: true,
   showSetback: true,
@@ -247,6 +249,183 @@ function addTerrain(parent: any, extentX: number, extentZ: number, slope: number
   return terrainGroup;
 }
 
+/**
+ * Build 0.2 m contour lines directly from the selected parcel DEM triangles.
+ * Coordinates are in the House Generator's local metre system.
+ */
+function addDemContourLines(
+  parent: any,
+  vertices: Array<{ x: number; z: number; elevationM: number }>,
+  indices: ArrayLike<number>,
+  baseElevationM: number,
+  intervalM = 0.2,
+) {
+  if (vertices.length === 0 || indices.length < 3 || intervalM <= 0) return;
+
+  const minorPositions: number[] = [];
+  const majorPositions: number[] = [];
+  const minimumElevation = Math.min(...vertices.map((vertex) => vertex.elevationM));
+  const maximumElevation = Math.max(...vertices.map((vertex) => vertex.elevationM));
+  const epsilon = 1e-7;
+  const firstLevel = Math.ceil((minimumElevation - epsilon) / intervalM) * intervalM;
+  const contourCount = Math.floor((maximumElevation - firstLevel + epsilon) / intervalM) + 1;
+
+  // Guard against corrupt DEM values accidentally producing millions of levels.
+  if (!Number.isFinite(contourCount) || contourCount <= 0 || contourCount > 5000) return;
+
+  for (let triangle = 0; triangle + 2 < indices.length; triangle += 3) {
+    const a = vertices[indices[triangle]];
+    const b = vertices[indices[triangle + 1]];
+    const c = vertices[indices[triangle + 2]];
+    if (!a || !b || !c) continue;
+
+    const triangleMinimum = Math.min(a.elevationM, b.elevationM, c.elevationM);
+    const triangleMaximum = Math.max(a.elevationM, b.elevationM, c.elevationM);
+    let level = Math.ceil((triangleMinimum - epsilon) / intervalM) * intervalM;
+
+    for (; level <= triangleMaximum + epsilon; level += intervalM) {
+      const intersections: Array<{ x: number; z: number }> = [];
+      const edges: Array<[typeof a, typeof b]> = [[a, b], [b, c], [c, a]];
+
+      for (const [start, end] of edges) {
+        const startElevation = start.elevationM;
+        const endElevation = end.elevationM;
+        const crossesLevel =
+          (startElevation < level && endElevation >= level) ||
+          (endElevation < level && startElevation >= level);
+        if (!crossesLevel) continue;
+
+        const denominator = endElevation - startElevation;
+        if (Math.abs(denominator) < 1e-12) continue;
+        const ratio = Math.max(0, Math.min(1, (level - startElevation) / denominator));
+        const point = {
+          x: start.x + (end.x - start.x) * ratio,
+          z: start.z + (end.z - start.z) * ratio,
+        };
+
+        if (!intersections.some((existing) =>
+          Math.abs(existing.x - point.x) < 1e-5 && Math.abs(existing.z - point.z) < 1e-5
+        )) {
+          intersections.push(point);
+        }
+      }
+
+      if (intersections.length < 2) continue;
+
+      // When a contour meets a vertex exactly, prefer the farthest pair and avoid zero-length segments.
+      let first = intersections[0];
+      let second = intersections[1];
+      let farthestDistanceSquared = -1;
+      for (let i = 0; i < intersections.length; i += 1) {
+        for (let j = i + 1; j < intersections.length; j += 1) {
+          const dx = intersections[i].x - intersections[j].x;
+          const dz = intersections[i].z - intersections[j].z;
+          const distanceSquared = dx * dx + dz * dz;
+          if (distanceSquared > farthestDistanceSquared) {
+            farthestDistanceSquared = distanceSquared;
+            first = intersections[i];
+            second = intersections[j];
+          }
+        }
+      }
+      if (farthestDistanceSquared < 1e-10) continue;
+
+      const target = Math.abs(level / 1 - Math.round(level / 1)) < 1e-6
+        ? majorPositions
+        : minorPositions;
+      const lineY = level - baseElevationM + 0.035;
+      target.push(first.x, lineY, first.z, second.x, lineY, second.z);
+    }
+  }
+
+  if (minorPositions.length) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(minorPositions, 3));
+    const lines = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: "#718064",
+        transparent: true,
+        opacity: 0.78,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    lines.name = "DEM contour lines every 0.2 m";
+    lines.renderOrder = 3;
+    parent.add(lines);
+  }
+
+  if (majorPositions.length) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(majorPositions, 3));
+    const lines = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: "#4d5b45",
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    lines.name = "Index contours every 1.0 m";
+    lines.renderOrder = 4;
+    parent.add(lines);
+  }
+}
+
+function addPlanFootprint(
+  parent: any,
+  label: string,
+  centreX: number,
+  centreZ: number,
+  width: number,
+  depth: number,
+  elevation: number,
+  fillColour: string,
+  lineColour: string,
+) {
+  if (width <= 0 || depth <= 0) return;
+  const corners = [
+    new THREE.Vector3(centreX - width / 2, elevation, centreZ - depth / 2),
+    new THREE.Vector3(centreX + width / 2, elevation, centreZ - depth / 2),
+    new THREE.Vector3(centreX + width / 2, elevation, centreZ + depth / 2),
+    new THREE.Vector3(centreX - width / 2, elevation, centreZ + depth / 2),
+  ];
+
+  const fillGeometry = new THREE.BufferGeometry();
+  fillGeometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(corners.flatMap((point) => [point.x, point.y, point.z]), 3),
+  );
+  fillGeometry.setIndex([0, 1, 2, 0, 2, 3]);
+  fillGeometry.computeVertexNormals();
+  const fill = new THREE.Mesh(
+    fillGeometry,
+    new THREE.MeshBasicMaterial({
+      color: fillColour,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  fill.name = label + " 2D footprint fill";
+  fill.renderOrder = 5;
+  parent.add(fill);
+
+  const outline = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(corners),
+    new THREE.LineBasicMaterial({ color: lineColour, depthTest: false, depthWrite: false }),
+  );
+  outline.name = label + " 2D footprint outline";
+  outline.renderOrder = 6;
+  parent.add(outline);
+  parent.add(makeTextSprite(label, lineColour, centreX, elevation + 0.12, centreZ));
+}
+
 function buildParametricHouse(
   parent: any,
   params: HouseParameters,
@@ -421,11 +600,21 @@ function SelectControl({ value, options, onChange }: { value: string; options: s
 export default function HouseGeneratorView() {
   const hostRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<any>(null);
+  const perspectiveCameraRef = useRef<any>(null);
+  const orthographicCameraRef = useRef<any>(null);
+  const activeCameraRef = useRef<any>(null);
+  const sceneRef = useRef<any>(null);
   const controlsRef = useRef<any>(null);
+  const perspectiveTargetRef = useRef<any>(null);
+  const perspectivePositionRef = useRef<any>(null);
+  const orthographicHalfHeightRef = useRef(20);
+  const viewModeRef = useRef<"3D" | "2D">("3D");
   const modelRootRef = useRef<any>(null);
   const terrainRootRef = useRef<any>(null);
+  const contourRootRef = useRef<any>(null);
   const boundaryRootRef = useRef<any>(null);
   const setbackRootRef = useRef<any>(null);
+  const planRootRef = useRef<any>(null);
   const [params, setParams] = useState<HouseParameters>(INITIAL_PARAMETERS);
   const [metrics, setMetrics] = useState<MassingMetrics | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -433,6 +622,7 @@ export default function HouseGeneratorView() {
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   // Keep viewport overlays collapsed by default so the model remains easy to inspect.
   const [showViewportInfo, setShowViewportInfo] = useState(false);
+  const [viewMode, setViewMode] = useState<"3D" | "2D">("3D");
   const dispatch = useAppDispatch();
   const {
     selected: selectedAddress,
@@ -488,6 +678,10 @@ export default function HouseGeneratorView() {
       scene.fog = new THREE.Fog("#edf1eb", 45, 120);
       const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
       camera.position.set(20, 16, 23);
+      const orthographicCamera = new THREE.OrthographicCamera(-20, 20, 20, -20, 0.1, 5000);
+      // Local scene north is -Z, so the 2D view is north-up.
+      orthographicCamera.up.set(0, 0, -1);
+      orthographicCamera.position.set(0, 80, 0);
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setSize(Math.max(host.clientWidth, 1), Math.max(host.clientHeight, 1));
@@ -529,21 +723,38 @@ export default function HouseGeneratorView() {
       const boundaryRoot = new THREE.Group();
       boundaryRoot.name = "Parcel boundary and endpoint controls";
       scene.add(boundaryRoot);
+      const contourRoot = new THREE.Group();
+      contourRoot.name = "DEM contour lines at 0.2 m intervals";
+      scene.add(contourRoot);
       const setbackRoot = new THREE.Group();
       setbackRoot.name = "Parcel inward setback";
       scene.add(setbackRoot);
+      const planRoot = new THREE.Group();
+      planRoot.name = "Orthographic 2D house footprints";
+      scene.add(planRoot);
       cameraRef.current = camera;
+      perspectiveCameraRef.current = camera;
+      orthographicCameraRef.current = orthographicCamera;
+      activeCameraRef.current = camera;
+      sceneRef.current = scene;
       controlsRef.current = controls;
       modelRootRef.current = modelRoot;
       terrainRootRef.current = terrainRoot;
+      contourRootRef.current = contourRoot;
       boundaryRootRef.current = boundaryRoot;
       setbackRootRef.current = setbackRoot;
+      planRootRef.current = planRoot;
 
       const resize = () => {
         const width = Math.max(host.clientWidth, 1);
         const height = Math.max(host.clientHeight, 1);
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
+        orthographicCamera.left = -orthographicHalfHeightRef.current * (width / height);
+        orthographicCamera.right = orthographicHalfHeightRef.current * (width / height);
+        orthographicCamera.top = orthographicHalfHeightRef.current;
+        orthographicCamera.bottom = -orthographicHalfHeightRef.current;
+        orthographicCamera.updateProjectionMatrix();
         renderer.setSize(width, height);
       };
       const observer = new ResizeObserver(resize);
@@ -552,7 +763,7 @@ export default function HouseGeneratorView() {
       const animate = () => {
         frame = window.requestAnimationFrame(animate);
         controls.update();
-        renderer.render(scene, camera);
+        renderer.render(scene, activeCameraRef.current ?? camera);
       };
       animate();
 
@@ -562,16 +773,26 @@ export default function HouseGeneratorView() {
         controls.dispose();
         disposeGroup(modelRoot);
         disposeGroup(terrainRoot);
+        disposeGroup(contourRoot);
         disposeGroup(boundaryRoot);
         disposeGroup(setbackRoot);
+        disposeGroup(planRoot);
         renderer.dispose();
         if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
         cameraRef.current = null;
+        perspectiveCameraRef.current = null;
+        orthographicCameraRef.current = null;
+        activeCameraRef.current = null;
+        sceneRef.current = null;
         controlsRef.current = null;
+        perspectiveTargetRef.current = null;
+        perspectivePositionRef.current = null;
         modelRootRef.current = null;
         terrainRootRef.current = null;
+        contourRootRef.current = null;
         boundaryRootRef.current = null;
         setbackRootRef.current = null;
+        planRootRef.current = null;
       };
     } catch (error) {
       setWebglError(error instanceof Error ? error.message : "WebGL could not be initialised in this browser.");
@@ -582,13 +803,17 @@ export default function HouseGeneratorView() {
   useEffect(() => {
     const modelRoot = modelRootRef.current;
     const terrainRoot = terrainRootRef.current;
+    const contourRoot = contourRootRef.current;
     const boundaryRoot = boundaryRootRef.current;
     const setbackRoot = setbackRootRef.current;
-    if (!modelRoot || !terrainRoot || !boundaryRoot || !setbackRoot) return;
+    const planRoot = planRootRef.current;
+    if (!modelRoot || !terrainRoot || !contourRoot || !boundaryRoot || !setbackRoot || !planRoot) return;
     disposeGroup(modelRoot);
     disposeGroup(terrainRoot);
+    disposeGroup(contourRoot);
     disposeGroup(boundaryRoot);
     disposeGroup(setbackRoot);
+    disposeGroup(planRoot);
 
     const garageWidth = params.showGarage ? GARAGE_DIMENSIONS[params.garage].width : 0;
     const targetPerFloor = params.grossFloorAreaTargetM2 / Math.max(params.storeys, 1);
@@ -609,12 +834,15 @@ export default function HouseGeneratorView() {
       };
       const terrainGeometry = new THREE.BufferGeometry();
       const positions: number[] = [];
+      const contourVertices: Array<{ x: number; z: number; elevationM: number }> = [];
       parcelMesh.vertices.forEach((vertex) => {
         const local = toScenePoint(vertex.lon, vertex.lat);
         positions.push(local.x, vertex.elevationM - baseElevationM, local.z);
+        contourVertices.push({ x: local.x, z: local.z, elevationM: vertex.elevationM });
       });
       terrainGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       terrainGeometry.setIndex(parcelMesh.indices);
+      addDemContourLines(contourRoot, contourVertices, parcelMesh.indices, baseElevationM, 0.2);
       terrainGeometry.computeVertexNormals();
       const terrainSurface = new THREE.Mesh(
         terrainGeometry,
@@ -703,9 +931,46 @@ export default function HouseGeneratorView() {
     const modelMetrics = buildParametricHouse(
       modelRoot, params, siteReady ? 0 : params.terrainSlopePercent, groundYAt,
     );
+
+    // The 2D plan displays a simple orthographic site plan of the house and garage footprints.
+    // It is intentionally a massing footprint, not an architectural floor plan.
+    const garageDimensions = GARAGE_DIMENSIONS[params.garage];
+    const planElevation = siteReady && parcelMesh
+      ? parcelMesh.maxElevationM - baseElevationM + 0.45
+      : (params.terrainSlopePercent / 100) * extentDepth / 2 + 1;
+    addPlanFootprint(
+      planRoot,
+      "MAIN BLOCK",
+      0,
+      0,
+      modelMetrics.mainWidthM,
+      modelMetrics.mainDepthM,
+      planElevation,
+      "#a8c3ae",
+      "#315d42",
+    );
+    if (params.showGarage && params.garage !== "No garage") {
+      const garageCentreX = -modelMetrics.mainWidthM / 2 - garageDimensions.width / 2 + 0.08;
+      const garageCentreZ = modelMetrics.mainDepthM / 2 - garageDimensions.depth / 2;
+      addPlanFootprint(
+        planRoot,
+        params.garage === "Carport" ? "CARPORT" : "GARAGE",
+        garageCentreX,
+        garageCentreZ,
+        garageDimensions.width,
+        garageDimensions.depth,
+        planElevation + 0.015,
+        "#c8d0d2",
+        "#485a65",
+      );
+    }
+
     terrainRoot.visible = params.showTerrain && (siteReady || !selectedAddress);
+    contourRoot.visible = siteReady && params.showTerrain && params.showContours;
     boundaryRoot.visible = siteReady && params.showBoundary;
     setbackRoot.visible = siteReady && params.showSetback;
+    modelRoot.visible = viewModeRef.current === "3D";
+    planRoot.visible = viewModeRef.current === "2D";
     modelRoot.updateMatrixWorld(true);
     setMetrics(modelMetrics);
     if (controlsRef.current) {
@@ -729,12 +994,109 @@ export default function HouseGeneratorView() {
       }
     : null;
 
+  const fitPlanCamera = useCallback(() => {
+    const orthographicCamera = orthographicCameraRef.current;
+    const controls = controlsRef.current;
+    const host = hostRef.current;
+    if (!orthographicCamera || !controls || !host) return;
+
+    const bounds = new THREE.Box3();
+    [
+      terrainRootRef.current,
+      contourRootRef.current,
+      boundaryRootRef.current,
+      setbackRootRef.current,
+      planRootRef.current,
+    ].forEach((group) => {
+      if (group) bounds.expandByObject(group);
+    });
+
+    let centre = new THREE.Vector3(0, 0, 0);
+    let size = new THREE.Vector3(30, 2, 30);
+    if (
+      Number.isFinite(bounds.min.x) && Number.isFinite(bounds.min.y) && Number.isFinite(bounds.min.z) &&
+      Number.isFinite(bounds.max.x) && Number.isFinite(bounds.max.y) && Number.isFinite(bounds.max.z)
+    ) {
+      centre = bounds.getCenter(new THREE.Vector3());
+      size = bounds.getSize(new THREE.Vector3());
+    }
+
+    const aspect = Math.max(host.clientWidth, 1) / Math.max(host.clientHeight, 1);
+    const halfHeight = Math.max(size.z / 2, size.x / (2 * aspect), 8) * 1.14;
+    orthographicHalfHeightRef.current = halfHeight;
+    orthographicCamera.left = -halfHeight * aspect;
+    orthographicCamera.right = halfHeight * aspect;
+    orthographicCamera.top = halfHeight;
+    orthographicCamera.bottom = -halfHeight;
+    orthographicCamera.up.set(0, 0, -1);
+    orthographicCamera.position.set(
+      centre.x,
+      Math.max(bounds.max.y + Math.max(size.x, size.z, 15) * 2, centre.y + 30),
+      centre.z,
+    );
+    orthographicCamera.lookAt(centre);
+    orthographicCamera.updateProjectionMatrix();
+
+    controls.object = orthographicCamera;
+    controls.enableRotate = false;
+    controls.enablePan = true;
+    controls.maxPolarAngle = 0;
+    controls.target.copy(centre);
+    controls.update();
+    cameraRef.current = orthographicCamera;
+    activeCameraRef.current = orthographicCamera;
+  }, []);
+
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+    const modelRoot = modelRootRef.current;
+    const planRoot = planRootRef.current;
+    const controls = controlsRef.current;
+    const perspectiveCamera = perspectiveCameraRef.current;
+    if (modelRoot) modelRoot.visible = viewMode === "3D";
+    if (planRoot) planRoot.visible = viewMode === "2D";
+    if (!controls || !perspectiveCamera) return;
+
+    if (viewMode === "2D") {
+      perspectiveTargetRef.current = controls.target.clone();
+      perspectivePositionRef.current = perspectiveCamera.position.clone();
+      fitPlanCamera();
+      return;
+    }
+
+    const target = perspectiveTargetRef.current ?? new THREE.Vector3(0, (metrics?.heightM ?? 6) * 0.43, 0);
+    const position = perspectivePositionRef.current ?? new THREE.Vector3(20, 16, 23);
+    controls.object = perspectiveCamera;
+    controls.enableRotate = true;
+    controls.maxPolarAngle = Math.PI * 0.49;
+    controls.target.copy(target);
+    perspectiveCamera.position.copy(position);
+    perspectiveCamera.up.set(0, 1, 0);
+    perspectiveCamera.lookAt(target);
+    controls.update();
+    cameraRef.current = perspectiveCamera;
+    activeCameraRef.current = perspectiveCamera;
+  }, [viewMode, fitPlanCamera, metrics]);
+
   const resetCamera = useCallback(() => {
-    if (!cameraRef.current || !controlsRef.current) return;
-    cameraRef.current.position.set(20, 16, 23);
-    controlsRef.current.target.set(0, (metrics?.heightM ?? 6) * 0.43, 0);
-    controlsRef.current.update();
-  }, [metrics]);
+    if (viewMode === "2D") {
+      fitPlanCamera();
+      return;
+    }
+    const camera = perspectiveCameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    const target = new THREE.Vector3(0, (metrics?.heightM ?? 6) * 0.43, 0);
+    camera.position.set(20, 16, 23);
+    controls.object = camera;
+    controls.target.copy(target);
+    controls.enableRotate = true;
+    controls.maxPolarAngle = Math.PI * 0.49;
+    camera.lookAt(target);
+    controls.update();
+    perspectiveTargetRef.current = target.clone();
+    perspectivePositionRef.current = camera.position.clone();
+  }, [metrics, viewMode, fitPlanCamera]);
 
   const exportGlb = useCallback(() => {
     const modelRoot = modelRootRef.current;
@@ -857,6 +1219,7 @@ export default function HouseGeneratorView() {
               <ToggleRow label="Show roof" checked={params.showRoof} onChange={(value) => update("showRoof", value)} />
               <ToggleRow label="Show window panels" checked={params.showWindows} onChange={(value) => update("showWindows", value)} />
               <ToggleRow label="Show terrain mesh" checked={params.showTerrain} onChange={(value) => update("showTerrain", value)} />
+              <ToggleRow label="Show 0.2 m contour lines" checked={params.showContours} onChange={(value) => update("showContours", value)} />
               <ToggleRow label="Show parcel boundary and endpoints" checked={params.showBoundary} onChange={(value) => update("showBoundary", value)} />
               <ToggleRow label="Show 1 m setback line" checked={params.showSetback} onChange={(value) => update("showSetback", value)} />
               <ToggleRow label="Show garage" checked={params.showGarage} onChange={(value) => update("showGarage", value)} />
@@ -883,12 +1246,23 @@ export default function HouseGeneratorView() {
           )}
 
           <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-2">
-            <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur"><span className="mr-1.5 inline-block size-1.5 rounded-full bg-emerald-600" />Three.js · Parametric massing</span>
+            <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur"><span className="mr-1.5 inline-block size-1.5 rounded-full bg-emerald-600" />{viewMode === "3D" ? "3D · Parametric massing" : "2D plan · orthographic"}</span>
+            {siteReady && params.showTerrain && params.showContours ? <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur">Contours · 0.2 m interval</span> : null}
             <span className="rounded-md border border-amber-200 bg-amber-50/95 px-2.5 py-1 text-xs font-medium text-amber-900 shadow-sm"><TriangleAlert className="mr-1 inline size-3.5" /> Unverified concept</span>
             {selectedAddress && !siteReady ? <span className="rounded-md border bg-white/95 px-2.5 py-1 text-xs shadow-sm">{parcelTerrainLoading || lotStatus === "loading" ? "Loading selected parcel terrain…" : parcelTerrainError ? "Parcel terrain unavailable" : "Waiting for parcel data"}</span> : null}
           </div>
 
           <div className="absolute right-3 top-3 z-10 flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-white/70 bg-white/90 shadow-sm"
+              onClick={() => setViewMode((current) => current === "3D" ? "2D" : "3D")}
+              title={viewMode === "3D" ? "Switch to 2D site plan" : "Switch to 3D terrain view"}
+              aria-label={viewMode === "3D" ? "Switch to 2D site plan" : "Switch to 3D terrain view"}
+            >
+              {viewMode === "3D" ? "2D plan" : "3D view"}
+            </Button>
             <Button
               variant="outline"
               size="sm"
