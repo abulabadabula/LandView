@@ -15,7 +15,6 @@ from app.agents.planning_agent import assess_planning_readiness
 from app.agents.strategy_agent import build_strategy_reply
 from app.config import Settings
 
-
 logger = logging.getLogger(__name__)
 
 
