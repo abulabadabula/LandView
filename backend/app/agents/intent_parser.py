@@ -4,7 +4,6 @@ import re
 
 from app.agents.contracts import HouseDesignIntentPatch
 
-
 _CHINESE_NUMBERS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4}
 _ENGLISH_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4}
 
