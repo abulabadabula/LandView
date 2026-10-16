@@ -5,56 +5,202 @@
   "description": "A versioned, traceable planning rule set. Current packs require dated planner sign-off.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "pack_id", "council", "plan_name", "plan_version", "legal_status", "zone", "dwelling_typology", "pack_version", "effective_from", "reviewed_by", "reviewed_at", "source_url", "disclaimer", "rules"],
+  "required": [
+    "schema_version",
+    "pack_id",
+    "council",
+    "plan_name",
+    "plan_version",
+    "legal_status",
+    "zone",
+    "dwelling_typology",
+    "pack_version",
+    "effective_from",
+    "reviewed_by",
+    "reviewed_at",
+    "source_url",
+    "disclaimer",
+    "rules"
+  ],
   "properties": {
-    "schema_version": { "const": "1.0" },
-    "pack_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
-    "council": { "type": "string", "minLength": 1 },
-    "plan_name": { "type": "string", "minLength": 1 },
-    "plan_version": { "type": ["string", "null"] },
-    "legal_status": { "enum": ["DRAFT", "CURRENT", "SUPERSEDED"] },
-    "zone": { "type": "string", "minLength": 1 },
-    "dwelling_typology": { "type": "string", "minLength": 1 },
-    "pack_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-    "effective_from": { "type": ["string", "null"], "format": "date" },
-    "reviewed_by": { "type": ["string", "null"] },
-    "reviewed_at": { "type": ["string", "null"], "format": "date" },
-    "source_url": { "type": ["string", "null"] },
-    "disclaimer": { "type": "string", "minLength": 1 },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "pack_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+    },
+    "council": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plan_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plan_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "legal_status": {
+      "enum": [
+        "DRAFT",
+        "CURRENT",
+        "SUPERSEDED"
+      ]
+    },
+    "zone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dwelling_typology": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pack_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "effective_from": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "reviewed_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reviewed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "source_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "disclaimer": {
+      "type": "string",
+      "minLength": 1
+    },
     "rules": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "title", "category", "operator"],
+        "required": [
+          "id",
+          "title",
+          "category",
+          "operator"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
-          "title": { "type": "string", "minLength": 1 },
-          "category": { "type": "string", "minLength": 1 },
-          "operator": { "enum": ["max", "min", "equals", "boolean", "informational"] },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operator": {
+            "enum": [
+              "max",
+              "min",
+              "equals",
+              "boolean",
+              "informational"
+            ]
+          },
           "value": {},
-          "unit": { "type": ["string", "null"] },
-          "clause_ref": { "type": ["string", "null"] },
-          "applicability": { "type": "object" },
-          "source_url": { "type": ["string", "null"] },
-          "notes": { "type": ["string", "null"] }
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "clause_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "applicability": {
+            "type": "object"
+          },
+          "source_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metric_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$",
+            "description": "Deterministic measurement key supplied by a trusted geometry/site engine."
+          }
         }
       }
     }
   },
-  "allOf": [{
-    "if": {
-      "properties": { "legal_status": { "const": "CURRENT" } },
-      "required": ["legal_status"]
-    },
-    "then": {
-      "properties": {
-        "plan_version": { "type": "string", "minLength": 1 },
-        "effective_from": { "type": "string", "format": "date" },
-        "reviewed_by": { "type": "string", "minLength": 1 },
-        "reviewed_at": { "type": "string", "format": "date" },
-        "rules": { "minItems": 1 }
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "legal_status": {
+            "const": "CURRENT"
+          }
+        },
+        "required": [
+          "legal_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "plan_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "reviewed_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewed_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "rules": {
+            "minItems": 1
+          }
+        }
       }
     }
-  }]
+  ]
 }
