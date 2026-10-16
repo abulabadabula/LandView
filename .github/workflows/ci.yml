@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - name: Ruff lint
-        run: ruff check .
+        run: ruff check --fix --diff .
       - name: Type check (landview_core)
         run: pyright
       - name: Rule pack validation
