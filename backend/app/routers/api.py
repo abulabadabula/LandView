@@ -1,15 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from landview_core.rules import (
-    RulePackError,
-    RulePackEvaluationRequest,
-    RulePackEvaluationResult,
-    RulePackSummary,
-    evaluate_rule_pack,
-    list_registered_rule_pack_summaries,
-    load_registered_rule_pack,
-)
-
 from app.agents.contracts import HouseDesignChatRequest, HouseDesignChatResponse
 from app.agents.orchestrator import run_house_design_chat
 from app.config import get_settings
@@ -34,6 +24,17 @@ from app.services import context as context_service
 from app.services import environment, linz
 from app.services import setback as setback_service
 from app.services.house_design_validation import validate_house_design
+
+from landview_core.rules import (
+    RulePackError,
+    RulePackEvaluationRequest,
+    RulePackEvaluationResult,
+    RulePackSummary,
+    evaluate_rule_pack,
+    list_registered_rule_pack_summaries,
+    load_registered_rule_pack,
+)
+
 
 router = APIRouter(prefix="/api")
 
