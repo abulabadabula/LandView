@@ -63,7 +63,7 @@ def parse_design_intent(message: str) -> HouseDesignIntentPatch:
     elif "carport" in text or "车棚" in text:
         patch["garage"] = "Carport"
 
-    if any(term in text for term in ("双坡屋顶", "gable roof", "gable-roof", "双坡顶")):
+    if any(term in text for term in ("双坡屋顶", "双坡顶", "双坡形式", "双坡", "gable roof", "gable-roof")):
         patch["roof"] = "Gable roof"
     elif any(term in text for term in ("四坡屋顶", "hip roof", "hipped roof")):
         patch["roof"] = "Hip roof"
