@@ -3,7 +3,6 @@ from fastapi import APIRouter, Query
 from app.agents.contracts import HouseDesignChatRequest, HouseDesignChatResponse
 from app.agents.orchestrator import run_house_design_chat
 from app.config import get_settings
-
 from app.schemas import (
     AddressResult,
     BuildingCollection,
