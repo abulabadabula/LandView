@@ -34,7 +34,6 @@ from landview_core.rules import (
     load_registered_rule_pack,
 )
 
-
 router = APIRouter(prefix="/api")
 
 @router.get("/health")
