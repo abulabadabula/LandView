@@ -1,9 +1,9 @@
 """Versioned planning rule packs with explicit legal status and planner sign-off."""
 import json
 from datetime import date
+from enum import StrEnum
 from hashlib import sha256
 from math import isfinite
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
