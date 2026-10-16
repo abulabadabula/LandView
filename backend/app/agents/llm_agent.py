@@ -8,7 +8,6 @@ import httpx
 from app.agents.contracts import HouseDesignChatRequest, HouseDesignIntentPatch
 from app.config import Settings
 
-
 SYSTEM_PROMPT = """You are the language/intent component of LandView's New Zealand house-design assistant.
 Return one JSON object with exactly these keys: assistantMessage (string) and intentPatch (object).
 Only propose fields explicitly requested or unambiguously implied by the user's message.
