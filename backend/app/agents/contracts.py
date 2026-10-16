@@ -6,7 +6,6 @@ from pydantic import ConfigDict, Field
 
 from app.schemas import CamelModel
 
-
 ChatRole = Literal["user", "assistant"]
 RoofStyle = Literal["Gable roof", "Hip roof", "Flat roof", "Mono-pitch roof", "Mixed roof"]
 GarageStyle = Literal["No garage", "Single garage", "Double garage", "Carport"]
