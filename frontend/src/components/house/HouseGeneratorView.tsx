@@ -28,6 +28,8 @@ import { useAppDispatch, useAppSelector } from "@/store";
 import { loadParcelSetback, loadParcelTerrain } from "@/store/lotSlice";
 import { sampleElevation, toLocal } from "@/lib/geo";
 import { buildParcelTerrainMesh } from "@/lib/parcelTerrain";
+import { buildLegalEnvelopeGeometry, type LegalEnvelopeGeometry, type LegalEnvelopePoint } from "@/lib/legalEnvelope";
+import type { ParcelSetbackResult } from "@/types";
 import { api } from "@/lib/api";
 
 type RoofStyle = "Gable roof" | "Hip roof" | "Flat roof" | "Mono-pitch roof" | "Mixed roof";
@@ -100,6 +102,69 @@ interface MassingMetrics {
   heightM: number;
   totalFootprintM2: number;
   accountingNote: string;
+}
+
+
+interface LegalEnvelopeSettings {
+  showLegalEnvelope: boolean;
+  setbackDistanceM: number;
+  setbackConfirmed: boolean;
+  setbackClauseRef: string;
+  setbackSourceUrl: string;
+  hirbStartHeightM: number;
+  hirbAngleDeg: number;
+  hirbConfirmed: boolean;
+  hirbClauseRef: string;
+  hirbSourceUrl: string;
+}
+
+const LEGAL_ENVELOPE_STORAGE_KEY = "landview:legal-envelope:settings:v1";
+const DEFAULT_LEGAL_ENVELOPE_SETTINGS: LegalEnvelopeSettings = {
+  showLegalEnvelope: true,
+  setbackDistanceM: 1,
+  setbackConfirmed: false,
+  setbackClauseRef: "",
+  setbackSourceUrl: "",
+  hirbStartHeightM: 2.5,
+  hirbAngleDeg: 45,
+  hirbConfirmed: false,
+  hirbClauseRef: "",
+  hirbSourceUrl: "",
+};
+
+function loadLegalEnvelopeSettings(): LegalEnvelopeSettings {
+  if (typeof window === "undefined") return DEFAULT_LEGAL_ENVELOPE_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(LEGAL_ENVELOPE_STORAGE_KEY);
+    if (!raw) return DEFAULT_LEGAL_ENVELOPE_SETTINGS;
+    const value = JSON.parse(raw) as Partial<LegalEnvelopeSettings>;
+    return {
+      showLegalEnvelope: typeof value.showLegalEnvelope === "boolean" ? value.showLegalEnvelope : true,
+      setbackDistanceM: Number.isFinite(value.setbackDistanceM)
+        ? Math.min(20, Math.max(0, value.setbackDistanceM as number))
+        : DEFAULT_LEGAL_ENVELOPE_SETTINGS.setbackDistanceM,
+      setbackConfirmed: value.setbackConfirmed === true,
+      setbackClauseRef: typeof value.setbackClauseRef === "string" ? value.setbackClauseRef : "",
+      setbackSourceUrl: typeof value.setbackSourceUrl === "string" ? value.setbackSourceUrl : "",
+      hirbStartHeightM: Number.isFinite(value.hirbStartHeightM)
+        ? Math.min(10, Math.max(0, value.hirbStartHeightM as number))
+        : DEFAULT_LEGAL_ENVELOPE_SETTINGS.hirbStartHeightM,
+      hirbAngleDeg: Number.isFinite(value.hirbAngleDeg)
+        ? Math.min(89, Math.max(0, value.hirbAngleDeg as number))
+        : DEFAULT_LEGAL_ENVELOPE_SETTINGS.hirbAngleDeg,
+      hirbConfirmed: value.hirbConfirmed === true,
+      hirbClauseRef: typeof value.hirbClauseRef === "string" ? value.hirbClauseRef : "",
+      hirbSourceUrl: typeof value.hirbSourceUrl === "string" ? value.hirbSourceUrl : "",
+    };
+  } catch {
+    return DEFAULT_LEGAL_ENVELOPE_SETTINGS;
+  }
+}
+
+function hasConfirmedRuleReference(confirmed: boolean, clauseRef: string, sourceUrl: string) {
+  return confirmed
+    && clauseRef.trim().length > 0
+    && /^https:\/\/\S+$/i.test(sourceUrl.trim());
 }
 
 const INITIAL_PARAMETERS: HouseParameters = {
@@ -471,6 +536,142 @@ function addPlanFootprint(
   parent.add(makeTextSprite(label, lineColour, centreX, elevation + 0.12, centreZ));
 }
 
+
+function addLegalEnvelopeSolid(
+  parent: THREE.Group,
+  envelope: LegalEnvelopeGeometry,
+  conditionsMarkedConfirmed: boolean,
+  polygonIndex: number,
+) {
+  if (envelope.vertices.length < 3 || envelope.indices.length < 3) return;
+  const colour = conditionsMarkedConfirmed ? "#2b9c69" : "#e79a22";
+  const capGeometry = new THREE.BufferGeometry();
+  const positions: number[] = [];
+  envelope.vertices.forEach((vertex) => {
+    positions.push(vertex.eastM, vertex.capY, -vertex.northM);
+  });
+  capGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  capGeometry.setIndex(envelope.indices);
+  capGeometry.computeVertexNormals();
+
+  const cap = new THREE.Mesh(
+    capGeometry,
+    new THREE.MeshStandardMaterial({
+      color: colour,
+      transparent: true,
+      opacity: 0.27,
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  cap.name = "HIRB upper envelope cap " + polygonIndex;
+  cap.renderOrder = 3;
+  parent.add(cap);
+
+  const sidePositions: number[] = [];
+  const sideIndices: number[] = [];
+  envelope.boundaryVertices.forEach((start, index) => {
+    const end = envelope.boundaryVertices[(index + 1) % envelope.boundaryVertices.length];
+    const offset = sidePositions.length / 3;
+    sidePositions.push(
+      start.eastM, start.groundY, -start.northM,
+      end.eastM, end.groundY, -end.northM,
+      end.eastM, end.capY, -end.northM,
+      start.eastM, start.capY, -start.northM,
+    );
+    sideIndices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3);
+  });
+
+  const sideGeometry = new THREE.BufferGeometry();
+  sideGeometry.setAttribute("position", new THREE.Float32BufferAttribute(sidePositions, 3));
+  sideGeometry.setIndex(sideIndices);
+  sideGeometry.computeVertexNormals();
+  const sides = new THREE.Mesh(
+    sideGeometry,
+    new THREE.MeshStandardMaterial({
+      color: colour,
+      transparent: true,
+      opacity: 0.16,
+      roughness: 0.95,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  sides.name = "HIRB envelope vertical boundary faces " + polygonIndex;
+  sides.renderOrder = 2;
+  parent.add(sides);
+
+  const perimeter = envelope.boundaryVertices.map(
+    (vertex) => new THREE.Vector3(vertex.eastM, vertex.groundY + 0.12, -vertex.northM),
+  );
+  const outline = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(perimeter),
+    new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity: 0.95, depthTest: false }),
+  );
+  outline.name = "Legal envelope footprint perimeter " + polygonIndex;
+  outline.renderOrder = 5;
+  parent.add(outline);
+
+  const centre = envelope.footprint.reduce(
+    (sum, point) => ({ eastM: sum.eastM + point.eastM, northM: sum.northM + point.northM }),
+    { eastM: 0, northM: 0 },
+  );
+  const divisor = Math.max(envelope.footprint.length, 1);
+  const labelY = Math.max(...envelope.boundaryVertices.map((vertex) => vertex.capY)) + 0.25;
+  parent.add(makeTextSprite(
+    conditionsMarkedConfirmed ? "HIRB ENVELOPE · USER-MARKED" : "HIRB ENVELOPE · PREVIEW",
+    conditionsMarkedConfirmed ? "#176c47" : "#8b4b00",
+    centre.eastM / divisor,
+    labelY,
+    -centre.northM / divisor,
+  ));
+}
+
+function addLegalEnvelopePlan(
+  parent: THREE.Group,
+  footprint: LegalEnvelopePoint[],
+  elevation: number,
+  conditionsMarkedConfirmed: boolean,
+  polygonIndex: number,
+) {
+  if (footprint.length < 3) return;
+  const shape = new THREE.Shape();
+  shape.moveTo(footprint[0].eastM, footprint[0].northM);
+  footprint.slice(1).forEach((point) => shape.lineTo(point.eastM, point.northM));
+  shape.closePath();
+
+  const colour = conditionsMarkedConfirmed ? "#2b9c69" : "#e79a22";
+  const fillGeometry = new THREE.ShapeGeometry(shape);
+  fillGeometry.rotateX(-Math.PI / 2);
+  const fill = new THREE.Mesh(
+    fillGeometry,
+    new THREE.MeshBasicMaterial({
+      color: colour,
+      transparent: true,
+      opacity: 0.24,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  fill.name = "Legal envelope 2D footprint " + polygonIndex;
+  fill.position.y = elevation;
+  fill.renderOrder = 1;
+  parent.add(fill);
+
+  const outlinePoints = footprint.map(
+    (point) => new THREE.Vector3(point.eastM, elevation + 0.025, -point.northM),
+  );
+  const outline = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(outlinePoints),
+    new THREE.LineBasicMaterial({ color: colour, depthTest: false }),
+  );
+  outline.name = "Legal envelope 2D outline " + polygonIndex;
+  outline.renderOrder = 4;
+  parent.add(outline);
+}
+
 function buildParametricHouse(
   parent: any,
   params: HouseParameters,
@@ -659,8 +860,14 @@ export default function HouseGeneratorView() {
   const contourRootRef = useRef<any>(null);
   const boundaryRootRef = useRef<any>(null);
   const setbackRootRef = useRef<any>(null);
+  const legalEnvelopeRootRef = useRef<any>(null);
+  const legalEnvelopePlanRootRef = useRef<any>(null);
   const planRootRef = useRef<any>(null);
   const [params, setParams] = useState<HouseParameters>(INITIAL_PARAMETERS);
+  const [legalSettings, setLegalSettings] = useState<LegalEnvelopeSettings>(loadLegalEnvelopeSettings);
+  const [legalSetback, setLegalSetback] = useState<ParcelSetbackResult | null>(null);
+  const [legalSetbackLoading, setLegalSetbackLoading] = useState(false);
+  const [legalSetbackError, setLegalSetbackError] = useState<string | null>(null);
   const [chatStore, setChatStore] = useState<HouseChatStore>(() => {
     const saved = loadHouseChatStore();
     if (saved.sessions.length > 0) return saved;
@@ -693,11 +900,23 @@ export default function HouseGeneratorView() {
 
   const siteReady = lotStatus === "ready" && !!selectedAddress && !!parcel && !!parcelTerrain;
   const activeChat = chatStore.sessions.find((session) => session.id === chatStore.activeId) ?? chatStore.sessions[0] ?? null;
+  const setbackConditionMarkedConfirmed = hasConfirmedRuleReference(
+    legalSettings.setbackConfirmed, legalSettings.setbackClauseRef, legalSettings.setbackSourceUrl,
+  );
+  const hirbConditionMarkedConfirmed = hasConfirmedRuleReference(
+    legalSettings.hirbConfirmed, legalSettings.hirbClauseRef, legalSettings.hirbSourceUrl,
+  );
+  const legalConditionsMarkedConfirmed = setbackConditionMarkedConfirmed && hirbConditionMarkedConfirmed;
 
   useEffect(() => {
     try { window.localStorage.setItem(HOUSE_CHAT_STORAGE_KEY, JSON.stringify(chatStore)); }
     catch { /* Keep the current page usable if browser storage is unavailable. */ }
   }, [chatStore]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(LEGAL_ENVELOPE_STORAGE_KEY, JSON.stringify(legalSettings)); }
+    catch { /* Keep the current page usable if browser storage is unavailable. */ }
+  }, [legalSettings]);
 
   useEffect(() => {
     if (chatMessagesRef.current) chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
@@ -728,6 +947,51 @@ export default function HouseGeneratorView() {
     parcelTerrain, parcelTerrainLoading, parcelTerrainError,
     parcelSetback, parcelSetbackLoading, parcelSetbackError,
   ]);
+
+  useEffect(() => {
+    if (lotStatus !== "ready" || !parcel) {
+      setLegalSetback(null);
+      setLegalSetbackLoading(false);
+      setLegalSetbackError(null);
+      return;
+    }
+
+    if (
+      parcelSetback
+      && Math.abs(parcelSetback.distanceM - legalSettings.setbackDistanceM) < 0.001
+    ) {
+      setLegalSetback(parcelSetback);
+      setLegalSetbackLoading(false);
+      setLegalSetbackError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLegalSetback(null);
+    setLegalSetbackLoading(true);
+    setLegalSetbackError(null);
+    api.getParcelSetback(parcel.boundary, legalSettings.setbackDistanceM)
+      .then((result) => {
+        if (!cancelled) setLegalSetback(result);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLegalSetbackError(error instanceof Error ? error.message : "Could not calculate the requested inset.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLegalSetbackLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [lotStatus, parcel, parcelSetback, legalSettings.setbackDistanceM]);
+
+  const updateLegalSetting = <K extends keyof LegalEnvelopeSettings>(
+    key: K,
+    value: LegalEnvelopeSettings[K],
+  ) => {
+    setLegalSettings((current) => ({ ...current, [key]: value }));
+  };
 
   const startNewConversation = () => {
     const session = createHouseChatSession();
@@ -888,6 +1152,12 @@ export default function HouseGeneratorView() {
       const setbackRoot = new THREE.Group();
       setbackRoot.name = "Parcel inward setback";
       scene.add(setbackRoot);
+      const legalEnvelopeRoot = new THREE.Group();
+      legalEnvelopeRoot.name = "Three-dimensional legal envelope and HIRB-limited volume";
+      scene.add(legalEnvelopeRoot);
+      const legalEnvelopePlanRoot = new THREE.Group();
+      legalEnvelopePlanRoot.name = "Two-dimensional legal envelope footprint";
+      scene.add(legalEnvelopePlanRoot);
       const planRoot = new THREE.Group();
       planRoot.name = "Orthographic 2D house footprints";
       scene.add(planRoot);
@@ -902,6 +1172,8 @@ export default function HouseGeneratorView() {
       contourRootRef.current = contourRoot;
       boundaryRootRef.current = boundaryRoot;
       setbackRootRef.current = setbackRoot;
+      legalEnvelopeRootRef.current = legalEnvelopeRoot;
+      legalEnvelopePlanRootRef.current = legalEnvelopePlanRoot;
       planRootRef.current = planRoot;
 
       const resize = () => {
@@ -935,6 +1207,8 @@ export default function HouseGeneratorView() {
         disposeGroup(contourRoot);
         disposeGroup(boundaryRoot);
         disposeGroup(setbackRoot);
+        disposeGroup(legalEnvelopeRoot);
+        disposeGroup(legalEnvelopePlanRoot);
         disposeGroup(planRoot);
         renderer.dispose();
         if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
@@ -951,6 +1225,8 @@ export default function HouseGeneratorView() {
         contourRootRef.current = null;
         boundaryRootRef.current = null;
         setbackRootRef.current = null;
+        legalEnvelopeRootRef.current = null;
+        legalEnvelopePlanRootRef.current = null;
         planRootRef.current = null;
       };
     } catch (error) {
@@ -965,13 +1241,17 @@ export default function HouseGeneratorView() {
     const contourRoot = contourRootRef.current;
     const boundaryRoot = boundaryRootRef.current;
     const setbackRoot = setbackRootRef.current;
+    const legalEnvelopeRoot = legalEnvelopeRootRef.current;
+    const legalEnvelopePlanRoot = legalEnvelopePlanRootRef.current;
     const planRoot = planRootRef.current;
-    if (!modelRoot || !terrainRoot || !contourRoot || !boundaryRoot || !setbackRoot || !planRoot) return;
+    if (!modelRoot || !terrainRoot || !contourRoot || !boundaryRoot || !setbackRoot || !legalEnvelopeRoot || !legalEnvelopePlanRoot || !planRoot) return;
     disposeGroup(modelRoot);
     disposeGroup(terrainRoot);
     disposeGroup(contourRoot);
     disposeGroup(boundaryRoot);
     disposeGroup(setbackRoot);
+    disposeGroup(legalEnvelopeRoot);
+    disposeGroup(legalEnvelopePlanRoot);
     disposeGroup(planRoot);
 
     const garageWidth = params.showGarage ? GARAGE_DIMENSIONS[params.garage].width : 0;
@@ -1087,6 +1367,44 @@ export default function HouseGeneratorView() {
       groundYAt = () => 0;
     }
 
+
+    if (
+      siteReady && parcel && parcelTerrain && parcelMesh && siteAnchor
+      && legalSetback && groundYAt
+    ) {
+      const boundaryPoints: LegalEnvelopePoint[] = parcel.boundary.map((point) => {
+        const local = toLocal(point.lon, point.lat, siteAnchor.lon, siteAnchor.lat);
+        return { eastM: local.east, northM: local.north };
+      });
+      const envelopePlanElevation = parcelMesh.maxElevationM - baseElevationM + 0.47;
+      legalSetback.polygons.forEach((polygon, polygonIndex) => {
+        const footprint: LegalEnvelopePoint[] = polygon.points.map((point) => {
+          const local = toLocal(point.lon, point.lat, siteAnchor.lon, siteAnchor.lat);
+          return { eastM: local.east, northM: local.north };
+        });
+        const envelope = buildLegalEnvelopeGeometry(
+          footprint,
+          boundaryPoints,
+          groundYAt as (eastM: number, northM: number) => number,
+          {
+            startHeightM: legalSettings.hirbStartHeightM,
+            recessionAngleDeg: legalSettings.hirbAngleDeg,
+            maxCellSizeM: 1.5,
+          },
+        );
+        if (envelope.indices.length >= 3) {
+          addLegalEnvelopeSolid(legalEnvelopeRoot, envelope, legalConditionsMarkedConfirmed, polygonIndex + 1);
+          addLegalEnvelopePlan(
+            legalEnvelopePlanRoot,
+            envelope.footprint,
+            envelopePlanElevation,
+            legalConditionsMarkedConfirmed,
+            polygonIndex + 1,
+          );
+        }
+      });
+    }
+
     const modelMetrics = buildParametricHouse(
       modelRoot, params, siteReady ? 0 : params.terrainSlopePercent, groundYAt,
     );
@@ -1128,6 +1446,8 @@ export default function HouseGeneratorView() {
     contourRoot.visible = siteReady && params.showTerrain && params.showContours;
     boundaryRoot.visible = siteReady && params.showBoundary;
     setbackRoot.visible = siteReady && params.showSetback;
+    legalEnvelopeRoot.visible = siteReady && legalSettings.showLegalEnvelope && viewModeRef.current === "3D";
+    legalEnvelopePlanRoot.visible = siteReady && legalSettings.showLegalEnvelope && viewModeRef.current === "2D";
     modelRoot.visible = viewModeRef.current === "3D";
     planRoot.visible = viewModeRef.current === "2D";
     modelRoot.updateMatrixWorld(true);
@@ -1138,7 +1458,7 @@ export default function HouseGeneratorView() {
     }
   }, [
     params, generation, siteReady, parcel, parcelTerrain, parcelMesh,
-    parcelSetback, siteAnchor, selectedAddress,
+    parcelSetback, legalSetback, legalSettings, legalConditionsMarkedConfirmed, siteAnchor, selectedAddress,
   ]);
 
   const selectedTerrainSummary = siteReady && parcel && parcelTerrain && parcelMesh
@@ -1165,6 +1485,8 @@ export default function HouseGeneratorView() {
       contourRootRef.current,
       boundaryRootRef.current,
       setbackRootRef.current,
+      legalEnvelopeRootRef.current,
+      legalEnvelopePlanRootRef.current,
       planRootRef.current,
     ].forEach((group) => {
       if (group) bounds.expandByObject(group);
@@ -1380,8 +1702,102 @@ export default function HouseGeneratorView() {
               <ToggleRow label="Show terrain mesh" checked={params.showTerrain} onChange={(value) => update("showTerrain", value)} />
               <ToggleRow label="Show 0.2 m contour lines" checked={params.showContours} onChange={(value) => update("showContours", value)} />
               <ToggleRow label="Show parcel boundary and endpoints" checked={params.showBoundary} onChange={(value) => update("showBoundary", value)} />
-              <ToggleRow label="Show 1 m setback line" checked={params.showSetback} onChange={(value) => update("showSetback", value)} />
+              <ToggleRow label="Show generic 1 m geometric inset line" checked={params.showSetback} onChange={(value) => update("showSetback", value)} />
+              <ToggleRow label="Show legal envelope & HIRB volume" checked={legalSettings.showLegalEnvelope} onChange={(value) => updateLegalSetting("showLegalEnvelope", value)} />
               <ToggleRow label="Show garage" checked={params.showGarage} onChange={(value) => update("showGarage", value)} />
+            </div>
+
+
+            <div className="space-y-3 border-t pt-4">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Legal envelope conditions</h3>
+                <span className={"rounded px-2 py-0.5 text-[9px] font-semibold " + (legalConditionsMarkedConfirmed ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900")}>
+                  {legalConditionsMarkedConfirmed ? "USER-MARKED" : "PREVIEW ONLY"}
+                </span>
+              </div>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                Geometry uses the selected parcel and an inward offset. The offset and HIRB values below are only a preview until the applicable zone, precinct, overlays, boundary exceptions and source clauses are reviewed. A URL and checkbox are recorded as user confirmation; this tool does not independently verify the legal interpretation.
+              </p>
+              <Field label="Inward setback distance" hint="metres">
+                <Input
+                  type="number"
+                  min={0}
+                  max={20}
+                  step={0.1}
+                  value={legalSettings.setbackDistanceM}
+                  onChange={(event) => updateLegalSetting("setbackDistanceM", clampNumber(event.target.value, 0, 20))}
+                />
+              </Field>
+              <Field label="Setback rule / clause reference">
+                <Input
+                  value={legalSettings.setbackClauseRef}
+                  placeholder="e.g. applicable zone standard"
+                  onChange={(event) => updateLegalSetting("setbackClauseRef", event.target.value)}
+                />
+              </Field>
+              <Field label="Official planning source URL">
+                <Input
+                  type="url"
+                  value={legalSettings.setbackSourceUrl}
+                  placeholder="https://unitaryplan.aucklandcouncil.govt.nz/…"
+                  onChange={(event) => updateLegalSetting("setbackSourceUrl", event.target.value)}
+                />
+              </Field>
+              <ToggleRow
+                label="Planner-confirmed setback control"
+                checked={legalSettings.setbackConfirmed}
+                onChange={(value) => updateLegalSetting("setbackConfirmed", value)}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="HIRB start height" hint="m above boundary ground">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.1}
+                    value={legalSettings.hirbStartHeightM}
+                    onChange={(event) => updateLegalSetting("hirbStartHeightM", clampNumber(event.target.value, 0, 10))}
+                  />
+                </Field>
+                <Field label="Recession angle" hint="degrees">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={89}
+                    step={1}
+                    value={legalSettings.hirbAngleDeg}
+                    onChange={(event) => updateLegalSetting("hirbAngleDeg", clampNumber(event.target.value, 0, 89))}
+                  />
+                </Field>
+              </div>
+              <Field label="HIRB rule / clause reference">
+                <Input
+                  value={legalSettings.hirbClauseRef}
+                  placeholder="e.g. applicable HIRB standard"
+                  onChange={(event) => updateLegalSetting("hirbClauseRef", event.target.value)}
+                />
+              </Field>
+              <Field label="Official HIRB source URL">
+                <Input
+                  type="url"
+                  value={legalSettings.hirbSourceUrl}
+                  placeholder="https://unitaryplan.aucklandcouncil.govt.nz/…"
+                  onChange={(event) => updateLegalSetting("hirbSourceUrl", event.target.value)}
+                />
+              </Field>
+              <ToggleRow
+                label="Planner-confirmed HIRB control"
+                checked={legalSettings.hirbConfirmed}
+                onChange={(value) => updateLegalSetting("hirbConfirmed", value)}
+              />
+              {legalSetbackLoading ? <p className="text-[10px] text-muted-foreground">Calculating {legalSettings.setbackDistanceM.toFixed(1)} m inset…</p> : null}
+              {legalSetbackError ? <p role="alert" className="text-[10px] text-amber-800">Envelope inset failed: {legalSetbackError}</p> : null}
+              {legalSetback?.warning ? <p className="text-[10px] text-amber-800">{legalSetback.warning}</p> : null}
+              <p className="text-[10px] leading-4 text-muted-foreground">
+                {legalConditionsMarkedConfirmed
+                  ? "Both controls are marked confirmed with clause references and HTTPS sources. Applicability and source content have not been independently verified."
+                  : "The 2.5 m / 45° starter values are illustrative only. Enter the conditions that have been confirmed for this lot before treating the volume as a planning control."}
+              </p>
             </div>
 
             <div className="rounded-lg border bg-muted/35 p-3">
@@ -1407,11 +1823,24 @@ export default function HouseGeneratorView() {
           <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-2">
             <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur"><span className="mr-1.5 inline-block size-1.5 rounded-full bg-emerald-600" />{viewMode === "3D" ? "3D · Parametric massing" : "2D plan · orthographic"}</span>
             {siteReady && params.showTerrain && params.showContours ? <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur">Contours · 0.2 m interval</span> : null}
+            {siteReady && legalSettings.showLegalEnvelope ? <span className={"rounded-md border px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur " + (legalConditionsMarkedConfirmed ? "border-emerald-200 bg-emerald-50/95 text-emerald-900" : "border-amber-200 bg-amber-50/95 text-amber-900")}>{legalConditionsMarkedConfirmed ? "Envelope · sources user-marked" : "Envelope · unverified rules"}</span> : null}
             <span className="rounded-md border border-amber-200 bg-amber-50/95 px-2.5 py-1 text-xs font-medium text-amber-900 shadow-sm"><TriangleAlert className="mr-1 inline size-3.5" /> Unverified concept</span>
             {selectedAddress && !siteReady ? <span className="rounded-md border bg-white/95 px-2.5 py-1 text-xs shadow-sm">{parcelTerrainLoading || lotStatus === "loading" ? "Loading selected parcel terrain…" : parcelTerrainError ? "Parcel terrain unavailable" : "Waiting for parcel data"}</span> : null}
           </div>
 
-          <div className="absolute right-3 top-3 z-10 flex gap-2">
+          <div className="absolute right-3 top-3 z-10 flex flex-wrap justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-white/70 bg-white/90 shadow-sm"
+              onClick={() => updateLegalSetting("showLegalEnvelope", !legalSettings.showLegalEnvelope)}
+              title={legalSettings.showLegalEnvelope ? "Hide legal envelope and HIRB volume" : "Show legal envelope and HIRB volume"}
+              aria-label={legalSettings.showLegalEnvelope ? "Hide legal envelope and HIRB volume" : "Show legal envelope and HIRB volume"}
+              aria-pressed={legalSettings.showLegalEnvelope}
+            >
+              {legalSettings.showLegalEnvelope ? <EyeOff /> : <Eye />}
+              {legalSettings.showLegalEnvelope ? "Hide envelope" : "Show envelope"}
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -1451,9 +1880,12 @@ export default function HouseGeneratorView() {
                 <div className="mt-1 text-muted-foreground">
                   {selectedTerrainSummary.boundaryCount} boundary points · {selectedTerrainSummary.setbackCount} setback points
                 </div>
-                {parcelSetbackLoading ? <div className="mt-1 text-violet-700">Loading 1 m setback geometry…</div> : null}
-                {parcelSetbackError ? <div className="mt-1 text-amber-700">Setback load failed: {parcelSetbackError}</div> : null}
+                {parcelSetbackLoading ? <div className="mt-1 text-violet-700">Loading generic 1 m inset geometry…</div> : null}
+                {parcelSetbackError ? <div className="mt-1 text-amber-700">Inset load failed: {parcelSetbackError}</div> : null}
                 {parcelSetback?.warning ? <div className="mt-1 text-amber-700">{parcelSetback.warning}</div> : null}
+                {legalSetback ? <div className="mt-1 text-emerald-700">Envelope inset: {legalSetback.distanceM.toFixed(1)} m · source geometry only</div> : null}
+                {legalSetbackError ? <div className="mt-1 text-amber-700">Envelope inset error: {legalSetbackError}</div> : null}
+                {legalConditionsMarkedConfirmed ? <div className="mt-1 text-emerald-700">Rule inputs marked confirmed by user; not independently checked</div> : <div className="mt-1 text-amber-700">HIRB and setback conditions are not confirmed</div>}
               </div>
             ) : selectedAddress && parcelTerrainError ? (
               <div className="pointer-events-none absolute left-3 top-14 z-10 max-w-md rounded-md border border-amber-300 bg-amber-50/95 p-3 text-xs text-amber-900 shadow-sm">
