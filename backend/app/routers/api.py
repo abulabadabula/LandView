@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.agents.contracts import HouseDesignChatRequest, HouseDesignChatResponse
 from app.agents.orchestrator import run_house_design_chat
@@ -24,6 +24,15 @@ from app.services import context as context_service
 from app.services import environment, linz
 from app.services import setback as setback_service
 from app.services.house_design_validation import validate_house_design
+from landview_core.rules import (
+    RulePackError,
+    RulePackEvaluationRequest,
+    RulePackEvaluationResult,
+    RulePackSummary,
+    evaluate_rule_pack,
+    list_registered_rule_pack_summaries,
+    load_registered_rule_pack,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -70,6 +79,22 @@ async def house_design_constraints_validate(request: HouseDesignValidationReques
 async def house_design_agent_chat(request: HouseDesignChatRequest):
     """Run the house-design chat workflow; this endpoint does not issue compliance Pass/Fail."""
     return await run_house_design_chat(request, get_settings())
+
+
+@router.get("/house-design/rules/packs", response_model=list[RulePackSummary])
+async def house_design_rule_packs():
+    """List the versioned planning rule packs registered on the backend."""
+    return list_registered_rule_pack_summaries()
+
+
+@router.post("/house-design/rules/evaluate", response_model=RulePackEvaluationResult)
+async def evaluate_house_design_rule_pack(request: RulePackEvaluationRequest):
+    """Evaluate scalar measurements against a registry pack; drafts are always blocked."""
+    try:
+        pack = load_registered_rule_pack(request.pack_id)
+    except RulePackError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return evaluate_rule_pack(pack, request.measurements)
 
 
 @router.get("/environment", response_model=Environment)

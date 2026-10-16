@@ -16,6 +16,7 @@ instrument and legal status for the target site and capture:
 
 - the plan version and effective date;
 - the exact clause or rule reference and source URL for each value;
+- the deterministic input mapping (`metric_key`) for each executable rule;
 - the planner/reviewer and review date;
 - a new semantic pack version when rule content changes.
 
@@ -34,3 +35,15 @@ python -m landview_core.rule_cli diff ../rules/auckland/draft/single-dwelling.ya
 
 lint validates YAML against the JSON Schema and the Python cross-field checks.
 diff reports rule additions, removals and field-level changes as JSON.
+
+
+## Deterministic evaluation API
+
+The backend exposes:
+
+- `GET /api/house-design/rules/packs` — lists validated packs and marks whether each is eligible for solving.
+- `POST /api/house-design/rules/evaluate` — evaluates scalar measurements against the selected registered pack, returning a per-rule status matrix, clause/source references, pack version, and SHA-256 hashes for the rule pack and measurement input.
+
+An executable rule uses `metric_key` to name the measurement produced by a deterministic site or geometry engine. Supported operators are `max`, `min`, `equals`, and `boolean`. An `informational` rule never produces a compliance Pass/Fail. Missing measurements return `NOT_EVALUATED`; any such check prevents an overall Pass. Packs that are `DRAFT` or `SUPERSEDED` are not evaluated and return `BLOCKED`.
+
+The API accepts a registered `packId`, not a filesystem path, so callers cannot select arbitrary server files. The current Auckland placeholder is intentionally empty and remains `DRAFT`. Do not infer Auckland planning values from this evaluator until a planner has confirmed a complete rule pack for the relevant zone and overlays.

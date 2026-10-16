@@ -37,7 +37,8 @@ async def run_house_design_chat(
             try:
                 selected_patch = HouseDesignIntentPatch.model_validate(merged)
                 assistant_message = llm_message or build_strategy_reply(request, selected_patch)
-                provider = "openai"
+                base_url = settings.openai_base_url.lower()
+                provider = "gemini" if "generativelanguage.googleapis.com" in base_url else "openai-compatible"
             except ValueError:
                 logger.warning("Rejected invalid house-design intent patch returned by LLM")
                 selected_patch = deterministic_patch
