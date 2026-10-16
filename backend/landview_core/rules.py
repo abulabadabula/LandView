@@ -5,7 +5,7 @@ from enum import StrEnum
 from hashlib import sha256
 from math import isfinite
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import yaml
 from jsonschema import Draft202012Validator
@@ -278,7 +278,7 @@ def _stable_hash(value: Any) -> str:
     return sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _numeric(value: Any) -> bool:
+def _numeric(value: Any) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(float(value))
 
 
