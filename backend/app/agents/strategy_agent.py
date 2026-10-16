@@ -4,7 +4,6 @@ import re
 
 from app.agents.contracts import HouseDesignChatRequest, HouseDesignIntentPatch
 
-
 _LABELS = {
     "storeys": "层数",
     "bedrooms": "卧室数",
