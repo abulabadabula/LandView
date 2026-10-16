@@ -1532,10 +1532,18 @@ export default function HouseGeneratorView() {
     viewModeRef.current = viewMode;
     const modelRoot = modelRootRef.current;
     const planRoot = planRootRef.current;
+    const legalEnvelopeRoot = legalEnvelopeRootRef.current;
+    const legalEnvelopePlanRoot = legalEnvelopePlanRootRef.current;
     const controls = controlsRef.current;
     const perspectiveCamera = perspectiveCameraRef.current;
     if (modelRoot) modelRoot.visible = viewMode === "3D";
     if (planRoot) planRoot.visible = viewMode === "2D";
+    if (legalEnvelopeRoot) {
+      legalEnvelopeRoot.visible = siteReady && legalSettings.showLegalEnvelope && viewMode === "3D";
+    }
+    if (legalEnvelopePlanRoot) {
+      legalEnvelopePlanRoot.visible = siteReady && legalSettings.showLegalEnvelope && viewMode === "2D";
+    }
     if (!controls || !perspectiveCamera) return;
 
     if (viewMode === "2D") {
@@ -1557,7 +1565,7 @@ export default function HouseGeneratorView() {
     controls.update();
     cameraRef.current = perspectiveCamera;
     activeCameraRef.current = perspectiveCamera;
-  }, [viewMode, fitPlanCamera, metrics]);
+  }, [viewMode, fitPlanCamera, metrics, siteReady, legalSettings.showLegalEnvelope]);
 
   const resetCamera = useCallback(() => {
     if (viewMode === "2D") {
