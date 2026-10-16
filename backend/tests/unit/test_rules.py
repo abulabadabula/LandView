@@ -5,16 +5,16 @@ import pytest
 
 from landview_core.rules import (
     LegalStatus,
+    PlanningRule,
+    RuleCheckStatus,
+    RuleOperator,
+    RulePack,
     RulePackError,
     assert_usable_for_solving,
     diff_rule_packs,
-    load_rule_pack,
-    PlanningRule,
-    RuleOperator,
-    RulePack,
-    RuleCheckStatus,
     evaluate_rule_pack,
     list_registered_rule_pack_summaries,
+    load_rule_pack,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
