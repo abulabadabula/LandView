@@ -30,7 +30,7 @@ import { useAppDispatch, useAppSelector } from "@/store";
 import { loadParcelSetback, loadParcelTerrain } from "@/store/lotSlice";
 import { sampleElevation, toLocal } from "@/lib/geo";
 import { buildParcelTerrainMesh } from "@/lib/parcelTerrain";
-import { buildLegalEnvelopeGeometry, type LegalEnvelopeGeometry, type LegalEnvelopePoint } from "@/lib/legalEnvelope";
+import { buildLegalEnvelopeGeometry, type HirbSurfaceMode, type LegalEnvelopeGeometry, type LegalEnvelopePoint } from "@/lib/legalEnvelope";
 import type { ParcelSetbackResult } from "@/types";
 import { api } from "@/lib/api";
 
@@ -113,6 +113,7 @@ interface LegalEnvelopeSettings {
   setbackConfirmed: boolean;
   setbackClauseRef: string;
   setbackSourceUrl: string;
+  hirbMode: HirbSurfaceMode;
   hirbStartHeightM: number;
   hirbAngleDeg: number;
   hirbConfirmed: boolean;
@@ -127,6 +128,7 @@ const DEFAULT_LEGAL_ENVELOPE_SETTINGS: LegalEnvelopeSettings = {
   setbackConfirmed: false,
   setbackClauseRef: "",
   setbackSourceUrl: "",
+  hirbMode: "planar",
   hirbStartHeightM: 2.5,
   hirbAngleDeg: 45,
   hirbConfirmed: false,
@@ -148,6 +150,7 @@ function loadLegalEnvelopeSettings(): LegalEnvelopeSettings {
       setbackConfirmed: value.setbackConfirmed === true,
       setbackClauseRef: typeof value.setbackClauseRef === "string" ? value.setbackClauseRef : "",
       setbackSourceUrl: typeof value.setbackSourceUrl === "string" ? value.setbackSourceUrl : "",
+      hirbMode: value.hirbMode === "terrain-following" ? "terrain-following" : "planar",
       hirbStartHeightM: Number.isFinite(value.hirbStartHeightM)
         ? Math.min(10, Math.max(0, value.hirbStartHeightM as number))
         : DEFAULT_LEGAL_ENVELOPE_SETTINGS.hirbStartHeightM,
@@ -614,6 +617,30 @@ function addLegalEnvelopeSolid(
   outline.name = "Legal envelope footprint perimeter " + polygonIndex;
   outline.renderOrder = 5;
   parent.add(outline);
+
+  if (envelope.ridgeSegments.length > 0) {
+    const ridgePositions: number[] = [];
+    for (const segment of envelope.ridgeSegments) {
+      ridgePositions.push(
+        segment.start.eastM, segment.startCapY + 0.025, -segment.start.northM,
+        segment.end.eastM, segment.endCapY + 0.025, -segment.end.northM,
+      );
+    }
+    const ridgeGeometry = new THREE.BufferGeometry();
+    ridgeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(ridgePositions, 3));
+    const ridges = new THREE.LineSegments(
+      ridgeGeometry,
+      new THREE.LineBasicMaterial({
+        color: conditionsMarkedConfirmed ? "#146442" : "#8d4e00",
+        transparent: true,
+        opacity: 0.95,
+        depthTest: true,
+      }),
+    );
+    ridges.name = "Straight intersections between planar HIRB facets " + polygonIndex;
+    ridges.renderOrder = 6;
+    parent.add(ridges);
+  }
 
   const centre = envelope.footprint.reduce(
     (sum, point) => ({ eastM: sum.eastM + point.eastM, northM: sum.northM + point.northM }),
@@ -1394,6 +1421,7 @@ export default function HouseGeneratorView() {
             startHeightM: legalSettings.hirbStartHeightM,
             recessionAngleDeg: legalSettings.hirbAngleDeg,
             maxCellSizeM: 1.5,
+            mode: legalSettings.hirbMode,
           },
         );
         if (envelope.indices.length >= 3) {
@@ -1725,6 +1753,18 @@ export default function HouseGeneratorView() {
               <ToggleRow label="Show parcel boundary and endpoints" checked={params.showBoundary} onChange={(value) => update("showBoundary", value)} />
               <ToggleRow label="Show generic 1 m geometric inset line" checked={params.showSetback} onChange={(value) => update("showSetback", value)} />
               <ToggleRow label="Show legal envelope & HIRB volume" checked={legalSettings.showLegalEnvelope} onChange={(value) => updateLegalSetting("showLegalEnvelope", value)} />
+              <Field label="HIRB surface mode">
+                <SelectControl
+                  value={legalSettings.hirbMode === "planar" ? "Planar" : "Terrain-following"}
+                  options={["Planar", "Terrain-following"]}
+                  onChange={(value) => updateLegalSetting("hirbMode", value === "Terrain-following" ? "terrain-following" : "planar")}
+                />
+              </Field>
+              <p className="text-[10px] leading-4 text-muted-foreground">
+                {legalSettings.hirbMode === "planar"
+                  ? "Planar: each boundary edge creates a flat HIRB plane. Plane intersections are straight lines; terrain is used only to establish the boundary endpoint datum."
+                  : "Terrain-following: the HIRB surface follows DEM elevations along the boundary, so curved or wavy intersections may appear."}
+              </p>
               <ToggleRow label="Show garage" checked={params.showGarage} onChange={(value) => update("showGarage", value)} />
             </div>
 
@@ -1844,7 +1884,7 @@ export default function HouseGeneratorView() {
           <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-2">
             <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur"><span className="mr-1.5 inline-block size-1.5 rounded-full bg-emerald-600" />{viewMode === "3D" ? "3D · Parametric massing" : "2D plan · orthographic"}</span>
             {siteReady && params.showTerrain && params.showContours ? <span className="rounded-md border border-white/70 bg-white/90 px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur">Contours · 0.2 m interval</span> : null}
-            {siteReady && legalSettings.showLegalEnvelope ? <span className={"rounded-md border px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur " + (legalConditionsMarkedConfirmed ? "border-emerald-200 bg-emerald-50/95 text-emerald-900" : "border-amber-200 bg-amber-50/95 text-amber-900")}>{legalConditionsMarkedConfirmed ? "Envelope · sources user-marked" : "Envelope · unverified rules"}</span> : null}
+            {siteReady && legalSettings.showLegalEnvelope ? <span className={"rounded-md border px-2.5 py-1 text-xs font-medium shadow-sm backdrop-blur " + (legalConditionsMarkedConfirmed ? "border-emerald-200 bg-emerald-50/95 text-emerald-900" : "border-amber-200 bg-amber-50/95 text-amber-900")}>HIRB · {legalSettings.hirbMode === "planar" ? "Planar" : "Terrain-following"} · {legalConditionsMarkedConfirmed ? "sources user-marked" : "unverified rules"}</span> : null}
             <span className="rounded-md border border-amber-200 bg-amber-50/95 px-2.5 py-1 text-xs font-medium text-amber-900 shadow-sm"><TriangleAlert className="mr-1 inline size-3.5" /> Unverified concept</span>
             {selectedAddress && !siteReady ? <span className="rounded-md border bg-white/95 px-2.5 py-1 text-xs shadow-sm">{parcelTerrainLoading || lotStatus === "loading" ? "Loading selected parcel terrain…" : parcelTerrainError ? "Parcel terrain unavailable" : "Waiting for parcel data"}</span> : null}
           </div>
