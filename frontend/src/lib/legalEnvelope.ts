@@ -8,6 +8,17 @@ export interface LegalEnvelopeVertex extends LegalEnvelopePoint {
   groundY: number;
   /** HIRB-limited upper elevation relative to the local scene datum. */
   capY: number;
+  /** Index of the exact planar HIRB facet in planar mode. */
+  surfaceIndex?: number;
+}
+
+export type HirbSurfaceMode = "planar" | "terrain-following";
+
+export interface LegalEnvelopeSegment {
+  start: LegalEnvelopePoint;
+  end: LegalEnvelopePoint;
+  startCapY: number;
+  endCapY: number;
 }
 
 export interface LegalEnvelopeGeometry {
@@ -18,6 +29,8 @@ export interface LegalEnvelopeGeometry {
   indices: number[];
   /** One vertex for each footprint corner, including ground and upper elevations. */
   boundaryVertices: LegalEnvelopeVertex[];
+  /** Straight facet-to-facet breaklines, populated in planar mode. */
+  ridgeSegments: LegalEnvelopeSegment[];
   triangleCount: number;
   clippedVertexCount: number;
   maximumHeightAboveGroundM: number;
@@ -28,6 +41,8 @@ export interface LegalEnvelopeParameters {
   recessionAngleDeg: number;
   /** Smaller cells depict changes in the limiting plane more accurately. */
   maxCellSizeM?: number;
+  /** Planar uses true flat planes; terrain-following preserves the existing DEM-draped method. */
+  mode?: HirbSurfaceMode;
 }
 
 const EPSILON = 1e-8;
@@ -57,6 +72,7 @@ export function buildLegalEnvelopeGeometry(
     vertices: [],
     indices: [],
     boundaryVertices: [],
+    ridgeSegments: [],
     triangleCount: 0,
     clippedVertexCount: 0,
     maximumHeightAboveGroundM: 0,
@@ -77,6 +93,17 @@ export function buildLegalEnvelopeGeometry(
     ? Math.min(5, Math.max(0.25, parameters.maxCellSizeM as number))
     : 1.5;
   const tangent = Math.tan((recessionAngleDeg * Math.PI) / 180);
+
+  if (parameters.mode === "planar") {
+    return buildPlanarLegalEnvelope(
+      footprint,
+      boundary,
+      baseTriangles,
+      groundYAt,
+      startHeightM,
+      tangent,
+    );
+  }
 
   const vertices: LegalEnvelopeVertex[] = [];
   const indices: number[] = [];
@@ -159,10 +186,222 @@ export function buildLegalEnvelopeGeometry(
     vertices,
     indices,
     boundaryVertices,
+    ridgeSegments: [],
     triangleCount: indices.length / 3,
     clippedVertexCount,
     maximumHeightAboveGroundM,
   };
+}
+
+
+interface AffinePlane {
+  a: number;
+  b: number;
+  c: number;
+  index: number;
+}
+
+function evaluatePlane(plane: AffinePlane, point: LegalEnvelopePoint) {
+  return plane.a * point.eastM + plane.b * point.northM + plane.c;
+}
+
+/**
+ * Planar mode builds one affine plane per parcel boundary edge, linearly
+ * interpolating between that edge's two DEM endpoint elevations. The footprint
+ * triangulation is clipped by all plane-pair inequalities so every output cap
+ * triangle lies on exactly one true plane and every facet breakline is straight.
+ */
+function buildPlanarLegalEnvelope(
+  footprint: LegalEnvelopePoint[],
+  boundary: LegalEnvelopePoint[],
+  baseTriangles: Array<[LegalEnvelopePoint, LegalEnvelopePoint, LegalEnvelopePoint]>,
+  groundYAt: (eastM: number, northM: number) => number,
+  startHeightM: number,
+  tangent: number,
+): LegalEnvelopeGeometry {
+  const planes: AffinePlane[] = [];
+  for (let index = 0; index < boundary.length; index += 1) {
+    const start = boundary[index];
+    const end = boundary[(index + 1) % boundary.length];
+    const dx = end.eastM - start.eastM;
+    const dn = end.northM - start.northM;
+    const lengthSquared = dx * dx + dn * dn;
+    const length = Math.sqrt(lengthSquared);
+    if (length <= EPSILON) continue;
+
+    const startGround = sampleGround(groundYAt, start.eastM, start.northM);
+    const endGround = sampleGround(groundYAt, end.eastM, end.northM);
+    const groundGradient = endGround - startGround;
+
+    // Extend the linear endpoint datum along the boundary's supporting line.
+    // The inward signed perpendicular distance is cross(edge, point-start)/length.
+    planes.push({
+      a: groundGradient * dx / lengthSquared - tangent * dn / length,
+      b: groundGradient * dn / lengthSquared + tangent * dx / length,
+      c: startGround + startHeightM
+        - groundGradient * (dx * start.eastM + dn * start.northM) / lengthSquared
+        + tangent * (dn * start.eastM - dx * start.northM) / length,
+      index,
+    });
+  }
+
+  const empty: LegalEnvelopeGeometry = {
+    footprint,
+    vertices: [],
+    indices: [],
+    boundaryVertices: [],
+    ridgeSegments: [],
+    triangleCount: 0,
+    clippedVertexCount: 0,
+    maximumHeightAboveGroundM: 0,
+  };
+  if (planes.length < 3) return empty;
+
+  const vertices: LegalEnvelopeVertex[] = [];
+  const indices: number[] = [];
+  const ridgeSegments: LegalEnvelopeSegment[] = [];
+  const ridgeKeys = new Set<string>();
+  let clippedVertexCount = 0;
+  let maximumHeightAboveGroundM = 0;
+
+  const addPatchVertex = (point: LegalEnvelopePoint, plane: AffinePlane) => {
+    const groundY = sampleGround(groundYAt, point.eastM, point.northM);
+    const capY = evaluatePlane(plane, point);
+    if (capY < groundY - 0.05) clippedVertexCount += 1;
+    maximumHeightAboveGroundM = Math.max(maximumHeightAboveGroundM, capY - groundY);
+    vertices.push({ ...point, groundY, capY, surfaceIndex: plane.index });
+    return vertices.length - 1;
+  };
+
+  const addRidgeSegment = (
+    start: LegalEnvelopePoint,
+    end: LegalEnvelopePoint,
+    startCapY: number,
+    endCapY: number,
+  ) => {
+    if (distance(start, end) < 1e-5) return;
+    const rounded = (point: LegalEnvelopePoint) =>
+      point.eastM.toFixed(3) + "," + point.northM.toFixed(3);
+    const a = rounded(start);
+    const b = rounded(end);
+    const key = a < b ? a + "|" + b : b + "|" + a;
+    if (ridgeKeys.has(key)) return;
+    ridgeKeys.add(key);
+    ridgeSegments.push({
+      start: { eastM: start.eastM, northM: start.northM },
+      end: { eastM: end.eastM, northM: end.northM },
+      startCapY,
+      endCapY,
+    });
+  };
+
+  for (const triangle of baseTriangles) {
+    for (const plane of planes) {
+      let polygon: LegalEnvelopePoint[] = triangle.map((point) => ({ ...point }));
+      for (const otherPlane of planes) {
+        if (otherPlane.index === plane.index || polygon.length === 0) continue;
+        polygon = clipByHalfPlane(
+          polygon,
+          (point) => evaluatePlane(plane, point) - evaluatePlane(otherPlane, point),
+        );
+      }
+
+      polygon = removeAdjacentDuplicates(polygon);
+      if (polygon.length < 3 || Math.abs(signedArea(polygon)) <= 1e-6) continue;
+      if (signedArea(polygon) < 0) polygon.reverse();
+
+      const firstIndex = vertices.length;
+      polygon.forEach((point) => addPatchVertex(point, plane));
+
+      for (let index = 1; index < polygon.length - 1; index += 1) {
+        indices.push(firstIndex, firstIndex + index, firstIndex + index + 1);
+      }
+
+      // Intersections between this active plane and another active plane are
+      // exact straight segments created by the half-plane clipping operation.
+      for (let edgeIndex = 0; edgeIndex < polygon.length; edgeIndex += 1) {
+        const start = polygon[edgeIndex];
+        const end = polygon[(edgeIndex + 1) % polygon.length];
+        for (const otherPlane of planes) {
+          if (otherPlane.index === plane.index) continue;
+          const startDelta = evaluatePlane(plane, start) - evaluatePlane(otherPlane, start);
+          const endDelta = evaluatePlane(plane, end) - evaluatePlane(otherPlane, end);
+          if (Math.abs(startDelta) <= 1e-5 && Math.abs(endDelta) <= 1e-5) {
+            addRidgeSegment(
+              start,
+              end,
+              evaluatePlane(plane, start),
+              evaluatePlane(plane, end),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  const boundaryVertices = footprint.map((point) => {
+    const groundY = sampleGround(groundYAt, point.eastM, point.northM);
+    const capY = Math.max(
+      groundY,
+      Math.min(...planes.map((plane) => evaluatePlane(plane, point))),
+    );
+    if (capY <= groundY + 0.05) clippedVertexCount += 1;
+    maximumHeightAboveGroundM = Math.max(maximumHeightAboveGroundM, capY - groundY);
+    return { ...point, groundY, capY };
+  });
+
+  return {
+    footprint,
+    vertices,
+    indices,
+    boundaryVertices,
+    ridgeSegments,
+    triangleCount: indices.length / 3,
+    clippedVertexCount,
+    maximumHeightAboveGroundM,
+  };
+}
+
+function clipByHalfPlane(
+  polygon: LegalEnvelopePoint[],
+  evaluate: (point: LegalEnvelopePoint) => number,
+) {
+  if (polygon.length === 0) return polygon;
+  const output: LegalEnvelopePoint[] = [];
+  let previous = polygon[polygon.length - 1];
+  let previousValue = evaluate(previous);
+  let previousInside = previousValue <= 1e-8;
+
+  for (const current of polygon) {
+    const currentValue = evaluate(current);
+    const currentInside = currentValue <= 1e-8;
+
+    if (currentInside !== previousInside) {
+      const denominator = previousValue - currentValue;
+      if (Math.abs(denominator) > EPSILON) {
+        const ratio = Math.min(1, Math.max(0, previousValue / denominator));
+        output.push({
+          eastM: previous.eastM + (current.eastM - previous.eastM) * ratio,
+          northM: previous.northM + (current.northM - previous.northM) * ratio,
+        });
+      }
+    }
+    if (currentInside) output.push({ eastM: current.eastM, northM: current.northM });
+
+    previous = current;
+    previousValue = currentValue;
+    previousInside = currentInside;
+  }
+  return removeAdjacentDuplicates(output);
+}
+
+function removeAdjacentDuplicates(polygon: LegalEnvelopePoint[]) {
+  const output: LegalEnvelopePoint[] = [];
+  for (const point of polygon) {
+    if (!output.length || distance(output[output.length - 1], point) > 1e-6) output.push(point);
+  }
+  if (output.length > 2 && distance(output[0], output[output.length - 1]) <= 1e-6) output.pop();
+  return output;
 }
 
 function sampleGround(
