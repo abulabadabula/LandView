@@ -17,6 +17,8 @@ export type HirbSurfaceMode = "planar" | "terrain-following";
 export interface LegalEnvelopeSegment {
   start: LegalEnvelopePoint;
   end: LegalEnvelopePoint;
+  startCapY: number;
+  endCapY: number;
 }
 
 export interface LegalEnvelopeGeometry {
@@ -271,7 +273,12 @@ function buildPlanarLegalEnvelope(
     return vertices.length - 1;
   };
 
-  const addRidgeSegment = (start: LegalEnvelopePoint, end: LegalEnvelopePoint) => {
+  const addRidgeSegment = (
+    start: LegalEnvelopePoint,
+    end: LegalEnvelopePoint,
+    startCapY: number,
+    endCapY: number,
+  ) => {
     if (distance(start, end) < 1e-5) return;
     const rounded = (point: LegalEnvelopePoint) =>
       point.eastM.toFixed(3) + "," + point.northM.toFixed(3);
@@ -283,6 +290,8 @@ function buildPlanarLegalEnvelope(
     ridgeSegments.push({
       start: { eastM: start.eastM, northM: start.northM },
       end: { eastM: end.eastM, northM: end.northM },
+      startCapY,
+      endCapY,
     });
   };
 
@@ -318,7 +327,12 @@ function buildPlanarLegalEnvelope(
           const startDelta = evaluatePlane(plane, start) - evaluatePlane(otherPlane, start);
           const endDelta = evaluatePlane(plane, end) - evaluatePlane(otherPlane, end);
           if (Math.abs(startDelta) <= 1e-5 && Math.abs(endDelta) <= 1e-5) {
-            addRidgeSegment(start, end);
+            addRidgeSegment(
+              start,
+              end,
+              evaluatePlane(plane, start),
+              evaluatePlane(plane, end),
+            );
           }
         }
       }
