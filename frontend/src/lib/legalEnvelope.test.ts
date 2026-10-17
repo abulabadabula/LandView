@@ -53,6 +53,34 @@ describe("buildLegalEnvelopeGeometry", () => {
     expect(geometry.indices.length / 3).toBe(geometry.triangleCount);
   });
 
+  it("builds exact planar facets and straight ridge segments in planar mode", () => {
+    const geometry = buildLegalEnvelopeGeometry(
+      footprint,
+      boundary,
+      (eastM, northM) => eastM * 0.08 + northM * 0.04,
+      { startHeightM: 2.5, recessionAngleDeg: 45, mode: "planar" },
+    );
+
+    expect(geometry.triangleCount).toBeGreaterThan(0);
+    expect(geometry.ridgeSegments.length).toBeGreaterThan(0);
+    expect(geometry.vertices.every((vertex) => Number.isInteger(vertex.surfaceIndex))).toBe(true);
+
+    for (let index = 0; index < geometry.indices.length; index += 3) {
+      const a = geometry.vertices[geometry.indices[index]];
+      const b = geometry.vertices[geometry.indices[index + 1]];
+      const c = geometry.vertices[geometry.indices[index + 2]];
+      expect(b.surfaceIndex).toBe(a.surfaceIndex);
+      expect(c.surfaceIndex).toBe(a.surfaceIndex);
+    }
+
+    expect(geometry.ridgeSegments.every(
+      (segment) => Math.hypot(
+        segment.end.eastM - segment.start.eastM,
+        segment.end.northM - segment.start.northM,
+      ) > 0,
+    )).toBe(true);
+  });
+
   it("returns an empty mesh for an unusable footprint or boundary", () => {
     const geometry = buildLegalEnvelopeGeometry(
       [{ eastM: 0, northM: 0 }, { eastM: 1, northM: 0 }],
