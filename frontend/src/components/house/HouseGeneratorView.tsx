@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Eye,
   EyeOff,
@@ -884,6 +886,8 @@ export default function HouseGeneratorView() {
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   // Keep viewport overlays collapsed by default so the model remains easy to inspect.
   const [showViewportInfo, setShowViewportInfo] = useState(false);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [viewMode, setViewMode] = useState<"3D" | "2D">("3D");
   const dispatch = useAppDispatch();
   const {
@@ -1645,12 +1649,21 @@ export default function HouseGeneratorView() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside className="max-h-[44vh] w-full shrink-0 overflow-y-auto border-b bg-card lg:max-h-none lg:w-[330px] lg:border-b-0 lg:border-r xl:w-[360px]">
+        <aside className={(leftPanelCollapsed ? "hidden " : "") + "max-h-[44vh] w-full shrink-0 overflow-y-auto border-b bg-card lg:max-h-none lg:w-[330px] lg:border-b-0 lg:border-r xl:w-[360px]"}>
           <div className="space-y-5 p-4">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="size-4 text-primary" />
               <h2 className="text-sm font-semibold">Design inputs</h2>
               <span className="ml-auto rounded bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">LIVE PARAMETRIC</span>
+              <button
+                type="button"
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border text-muted-foreground hover:bg-secondary hover:text-foreground"
+                onClick={() => setLeftPanelCollapsed(true)}
+                title="Collapse design inputs panel"
+                aria-label="Collapse design inputs panel"
+              >
+                <ChevronLeft className="size-4" />
+              </button>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -1837,6 +1850,16 @@ export default function HouseGeneratorView() {
           </div>
 
           <div className="absolute right-3 top-3 z-10 flex flex-wrap justify-end gap-2">
+            {leftPanelCollapsed ? (
+              <Button variant="outline" size="sm" className="border-white/70 bg-white/90 shadow-sm" onClick={() => setLeftPanelCollapsed(false)} title="Show design inputs panel" aria-label="Show design inputs panel">
+                <ChevronRight /> Inputs
+              </Button>
+            ) : null}
+            {rightPanelCollapsed ? (
+              <Button variant="outline" size="sm" className="border-white/70 bg-white/90 shadow-sm" onClick={() => setRightPanelCollapsed(false)} title="Show design conversation panel" aria-label="Show design conversation panel">
+                <ChevronLeft /> Chat
+              </Button>
+            ) : null}
             <Button
               variant="outline"
               size="sm"
@@ -1959,13 +1982,20 @@ export default function HouseGeneratorView() {
           ) : null}
         </section>
 
-        <aside className="flex max-h-[42vh] w-full shrink-0 flex-col border-t bg-card lg:max-h-none lg:w-[320px] lg:border-l lg:border-t-0 xl:w-[350px]">
+        <aside className={(rightPanelCollapsed ? "hidden " : "") + "flex max-h-[42vh] w-full shrink-0 flex-col border-t bg-card lg:max-h-none lg:w-[320px] lg:border-l lg:border-t-0 xl:w-[350px]"}>
           <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-3">
             <div className="flex min-w-0 items-center gap-2">
               <MessageCircle className="size-4 shrink-0 text-primary" />
               <div className="min-w-0"><h2 className="text-sm font-semibold">Design conversation</h2><p className="text-[10px] text-muted-foreground">Agent-assisted inputs · saved locally</p></div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                title="Collapse design conversation panel"
+                aria-label="Collapse design conversation panel"
+                onClick={() => setRightPanelCollapsed(true)}
+                className="rounded-md p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              ><ChevronRight className="size-4" /></button>
               <button type="button" title="Start a new conversation" aria-label="Start a new conversation" onClick={startNewConversation} disabled={chatSending} className="rounded-md p-2 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"><Plus className="size-4" /></button>
               <button type="button" title="Delete this conversation" aria-label="Delete this conversation" onClick={deleteActiveConversation} disabled={chatSending || !activeChat} className="rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"><Trash2 className="size-4" /></button>
             </div>
